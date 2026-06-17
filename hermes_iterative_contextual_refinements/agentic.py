@@ -11,22 +11,12 @@ from .config import ICRConfig
 from .json_utils import utc_now_iso
 from .llm import ICRLlm
 from .schemas import AGENTIC_ORCHESTRATOR_SCHEMA
+from .source_prompts import load_agentic_prompts
 
 
-AGENTIC_SYSTEM_PROMPT = """
-You are an autonomous refinement agent operating on a mutable working draft.
-Use tools for actions. Before every tool call, include a brief visible reasoning summary.
-Use at most one tool per turn unless batching edits inside multi_edit.
-The latest draft is not automatically re-sent after edits. Use read_current_content when needed.
-Run verify_current_content on the latest draft before Exit. If you edit after verification, verify again.
-Never ask the user questions. Decide, act, and refine.
-""".strip()
-
-VERIFIER_SYSTEM_PROMPT = """
-You are a strict verifier reviewing the current working draft. Identify concrete flaws,
-bugs, inconsistencies, unjustified assumptions, missing edge cases, and structural
-weaknesses. Be direct and concise. Do not propose fixes.
-""".strip()
+_AGENTIC_SOURCE_PROMPTS = load_agentic_prompts()
+AGENTIC_SYSTEM_PROMPT = _AGENTIC_SOURCE_PROMPTS["agentic_system"]
+VERIFIER_SYSTEM_PROMPT = _AGENTIC_SOURCE_PROMPTS["verifier_system"]
 
 AGENTIC_TOOLS = [
     "read_current_content",
@@ -229,4 +219,3 @@ def apply_operation(content: str, operation: dict[str, Any]) -> dict[str, Any]:
             return {"success": False, "result": content, "error": f"Marker not found: {target[:100]}"}
         return {"success": True, "result": content[: index + len(target)] + str(replacement) + content[index + len(target) :]}
     return {"success": False, "result": content, "error": f"Unknown edit action: {action}"}
-

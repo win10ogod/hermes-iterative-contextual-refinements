@@ -11,6 +11,14 @@ Hermes plugin for running Iterative Contextual Refinements (ICR) from Hermes Age
 - `agentic_refinement`: internal tool loop preserving `read_current_content`, `multi_edit`, `verify_current_content`, `searchacademia`, `searchacademia_and`, and verified-only `Exit`.
 - `dca`: dynamic compute alternatives with pool generator and local pool evolution.
 
+Default role system prompts are loaded from copied upstream prompt resources in `hermes_iterative_contextual_refinements/source_prompts/`. The package records SHA-256 checksums for those resources and tests that engines use the extracted upstream prompts instead of shortened reimplementations.
+
+Prompt parity can be checked after installation with:
+
+```bash
+python -m hermes_iterative_contextual_refinements.prompt_parity
+```
+
 Same-stage ICR work is executed concurrently where the source design uses parallel agent calls: sub-strategy generation, hypothesis testing, branch execution, critique, correction, Evolving DFS solution pools, memory agents, PQF groups, Adaptive Deepthink batch tools, and DCA local pools.
 
 Python-assisted agent roles are available with explicit config. When enabled, selected roles may return fenced `python` blocks; the plugin executes them in a persistent role-local Python session, records stdout/stderr/errors, then asks the same role to produce the final answer from the execution evidence.

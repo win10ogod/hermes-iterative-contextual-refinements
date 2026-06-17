@@ -7,12 +7,14 @@ from typing import Any
 from .config import ICRConfig
 from .llm import ICRLlm
 from .json_utils import utc_now_iso
+from .source_prompts import load_contextual_prompts
 
 
-MAIN_GENERATOR_PROMPT = "You are the Main Generator in an iterative refinement system. Produce the best current generation and incorporate critique and strategic pool guidance."
-ITERATIVE_AGENT_PROMPT = "You are the Iterative Agent. Critique the current generation for flaws, gaps, errors, and missed opportunities. Do not fix it."
-STRATEGIC_POOL_PROMPT = "You are the Strategic Pool Agent. Evolve a pool of unexplored strategies and radical alternatives based on the generation and critique. Return <<<Exit>>> only after repeated no-flaw critiques show completion."
-MEMORY_AGENT_PROMPT = "You are the Memory Agent. Condense recent iterations into what worked, what failed, persistent issues, useful techniques, and guidance for future generations."
+_CONTEXTUAL_SOURCE_PROMPTS = load_contextual_prompts()
+MAIN_GENERATOR_PROMPT = _CONTEXTUAL_SOURCE_PROMPTS["main_generator"]
+ITERATIVE_AGENT_PROMPT = _CONTEXTUAL_SOURCE_PROMPTS["iterative_agent"]
+STRATEGIC_POOL_PROMPT = _CONTEXTUAL_SOURCE_PROMPTS["strategic_pool_agent"]
+MEMORY_AGENT_PROMPT = _CONTEXTUAL_SOURCE_PROMPTS["memory_agent"]
 
 
 class ContextualRefinementEngine:
@@ -149,4 +151,3 @@ class ContextualRefinementEngine:
                 "Task: Create an evolving memory document summarizing what worked and what did not.",
             ]
         )
-

@@ -2,20 +2,28 @@ from __future__ import annotations
 
 import json
 import re
+import hashlib
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
 
 from hermes_iterative_contextual_refinements.agentic import apply_operation
+from hermes_iterative_contextual_refinements import adaptive as adaptive_module
+from hermes_iterative_contextual_refinements import agentic as agentic_module
+from hermes_iterative_contextual_refinements import contextual as contextual_module
+from hermes_iterative_contextual_refinements import dca as dca_module
+from hermes_iterative_contextual_refinements import prompts as prompt_module
 from hermes_iterative_contextual_refinements.config import build_config
 from hermes_iterative_contextual_refinements.commands import parse_icr_args
 from hermes_iterative_contextual_refinements.llm import ICRLlm
 from hermes_iterative_contextual_refinements.plugin import register
 from hermes_iterative_contextual_refinements.persistence import RunStore
+from hermes_iterative_contextual_refinements.prompt_parity import validate_prompt_parity
 from hermes_iterative_contextual_refinements.python_runtime import PythonSession, extract_python_blocks
 from hermes_iterative_contextual_refinements.runner import ICRRunner
 from hermes_iterative_contextual_refinements.schemas import icr_run_schema
+from hermes_iterative_contextual_refinements.source_prompts import SOURCE_PROMPT_SHA256, load_adaptive_prompts, load_deepthink_prompts
 from hermes_iterative_contextual_refinements.tools import make_handlers
 
 
@@ -214,6 +222,7 @@ def test_plugin_registration_and_schemas(monkeypatch, tmp_path):
         "icr-contextual-refinement",
         "icr-agentic-refinement",
         "icr-results-review",
+        "icr-prompt-parity",
     }
     schema = icr_run_schema()
     assert schema["parameters"]["properties"]["mode"]["enum"] == [
@@ -227,6 +236,54 @@ def test_plugin_registration_and_schemas(monkeypatch, tmp_path):
     config_schema = schema["parameters"]["properties"]["config"]
     assert config_schema["properties"]["max_api_attempts"]["const"] == 4
     assert config_schema["properties"]["python_execution_roles"]["oneOf"][0]["type"] == "string"
+
+
+def test_source_prompt_resources_are_exact_copies():
+    source_dir = Path(__file__).resolve().parents[1] / "hermes_iterative_contextual_refinements" / "source_prompts"
+    for name, expected in SOURCE_PROMPT_SHA256.items():
+        digest = hashlib.sha256((source_dir / name).read_bytes()).hexdigest()
+        assert digest == expected
+
+
+def test_engines_use_source_system_prompts():
+    deepthink = load_deepthink_prompts()
+    assert prompt_module.system_prompt("initial_strategy") == deepthink["sys_deepthink_initialStrategy"]
+    assert "Do not treat this document as mythology" in prompt_module.system_prompt("initial_strategy")
+    assert "80:20 exploration rule" in prompt_module.system_prompt("initial_strategy")
+    assert len(prompt_module.system_prompt("hypothesis_generation")) > 60000
+
+    assert contextual_module.MAIN_GENERATOR_PROMPT.startswith("You are the Main Generator and self-corrector")
+    assert "Radical Open-Mindedness Protocol" in contextual_module.MAIN_GENERATOR_PROMPT
+    assert agentic_module.AGENTIC_SYSTEM_PROMPT.startswith("You are an autonomous refinement agent")
+    assert "Run `verify_current_content` on the latest draft before using `Exit`." in agentic_module.AGENTIC_SYSTEM_PROMPT
+    adaptive = load_adaptive_prompts()
+    assert adaptive_module.ADAPTIVE_ORCHESTRATOR_PROMPT == adaptive["main"]
+    assert "You are an Adaptive Deepthink Orchestrator Agent" in adaptive_module.ADAPTIVE_ORCHESTRATOR_PROMPT
+    assert adaptive["strategy_generation"] == deepthink["sys_deepthink_initialStrategy"]
+    assert dca_module.POOL_GENERATOR_PROMPT.startswith("You are a strategic solution pool generator")
+    assert "GENUINE ORTHOGONALITY" in dca_module.POOL_GENERATOR_PROMPT
+
+
+def test_prompt_builders_preserve_source_runtime_wording():
+    strategy_prompt = prompt_module.strategy_generation_prompt("Task", 3)
+    assert "genuinely novel, fundamentally distinct" in strategy_prompt
+    assert "Return only JSON" in strategy_prompt
+
+    execution_prompt = prompt_module.execution_prompt(
+        "Task",
+        {"id": "main1", "main_strategy_id": "main1", "main_strategy_text": "Strategy", "sub_strategy_text": "Sub"},
+        [{"id": "main1", "text": "Strategy"}, {"id": "main2", "text": "Other"}],
+        "<Packet />",
+    )
+    assert "Context From Other Strategies" in execution_prompt
+    assert "Execute the assigned framework completely and faithfully" in execution_prompt
+    assert "Relevant Context For Your Current Strategy" in execution_prompt
+
+
+def test_installed_prompt_parity_validator_passes():
+    report = validate_prompt_parity()
+    assert report["ok"] is True
+    assert report["checked_resources"] == sorted(SOURCE_PROMPT_SHA256)
 
 
 def test_single_pass_deepthink_flow(tmp_path):
@@ -248,7 +305,8 @@ def test_single_pass_deepthink_flow(tmp_path):
     assert len(record["artifacts"]["strategies"]) == 2
     assert len(record["artifacts"]["branches"]) == 4
     final_input = record["artifacts"]["final"]["final_judge_input"]
-    assert "<Candidate Solutions>" in final_input
+    assert "<SOLUTION_1>" in final_input
+    assert "<SOLUTION_4>" in final_input
     assert "Critique for" not in final_input
     assert all(call["status"] == "completed" for call in record["llm_calls"])
 

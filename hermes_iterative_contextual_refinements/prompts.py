@@ -5,94 +5,36 @@ from __future__ import annotations
 from typing import Any
 
 from .json_utils import dumps
+from .source_prompts import deepthink_system_prompt
 
 
 JSON_ONLY = (
     "Return only a single valid JSON object. Do not include prose, markdown fences, "
     "or extra keys unless the schema allows them."
 )
-
-
-DEEPTHINK_CONTEXT = """
-Deepthink is a multi-agent search and refinement system. Strategies are branch
-identities, not steps. Agents receive only curated context for their role.
-Final judging compares candidate solutions only and must not inspect internal
-critiques, memory banks, PQF decisions, solution pools, hypothesis routing, or
-replacement history.
-""".strip()
-
-
-ROLE_PROMPTS = {
-    "initial_strategy": (
-        "You are the Initial Strategy Generation Agent. Generate independent, "
-        "domain-adapted branch-level strategies. Do not solve the challenge."
-    ),
-    "sub_strategy": (
-        "You are the Sub-Strategy Generation Agent. Generate narrower independent "
-        "lenses inside the assigned main strategy. Do not solve the challenge."
-    ),
-    "hypothesis_generation": (
-        "You are the Hypothesis Generation Agent. Generate testable hypotheses, "
-        "not final answers. In selective mode, include target strategy ids."
-    ),
-    "hypothesis_testing": (
-        "You are the Hypothesis Testing Agent. Test exactly one hypothesis. "
-        "Attempt validation and refutation, then classify VALIDATED, REFUTED, or INCONCLUSIVE."
-    ),
-    "solution_attempt": (
-        "You are the Solution Attempt Agent. Execute the assigned strategy faithfully "
-        "and produce a complete work product."
-    ),
-    "solution_critique": (
-        "You are the Solution Critique Agent. Identify flaws, gaps, unjustified claims, "
-        "counterexamples, and strategy-fidelity issues. Do not fix the solution."
-    ),
-    "self_improvement": (
-        "You are the Self-Improvement Agent. Produce a corrected complete solution "
-        "that addresses the critique while preserving the assigned strategy."
-    ),
-    "dissected_synthesis": (
-        "You are the Dissected Observations Synthesis Agent. Consolidate critique "
-        "findings into reusable diagnostic context. Do not produce final answers."
-    ),
-    "structured_solution_pool": (
-        "You are the Structured Solution Pool Agent. Generate exactly five substantive "
-        "alternatives, artifacts, tests, or reusable blocks for the assigned branch."
-    ),
-    "memory_bank": (
-        "You are the Memory Bank Agent. Distill branch exploration lessons into "
-        "validated invariants, dead ends, flaws, techniques, refuted assumptions, "
-        "open questions, and guidance. Do not summarize solution prose."
-    ),
-    "post_quality_filter": (
-        "You are the Post Quality Filter Agent. Decide whether assigned strategy slots "
-        "should keep their strategy or update the branch strategy. Do not rank final solutions."
-    ),
-    "strategy_update": (
-        "You are the Strategy Update Generator. Generate replacement strategy text "
-        "for slots marked update, avoiding failed prior directions."
-    ),
-    "final_judge": (
-        "You are the Final Judge. Compare only candidate solution texts and select "
-        "the best final answer. Ignore internal process signals."
-    ),
-}
+SECTION_SEPARATOR = "-------------------------------------------------------------------------------"
+REPOSITORY_CURRENT_CONTEXT_MARKER = "\n__DEEPTHINK_CURRENT_STRATEGY_CONTEXT__\n"
 
 
 def system_prompt(role: str) -> str:
-    return f"{ROLE_PROMPTS[role]}\n\n{DEEPTHINK_CONTEXT}"
+    return deepthink_system_prompt(role)
 
 
 def strategy_generation_prompt(challenge: str, count: int) -> str:
     return f"""Core Challenge:
 {challenge}
 
-Generate exactly {count} genuinely distinct high-level strategic interpretations.
-Each strategy must be self-contained and useful as a branch identity.
-Do not solve the challenge.
-
-Return JSON:
-{{"strategies": ["Strategy 1: ..."]}}"""
+<Initial Strategy Generation Request>
+Generate exactly {count} genuinely novel, fundamentally distinct high-level strategic interpretations for the Core Challenge.
+Each strategy must be a single concise, information-dense paragraph.
+Do not solve the challenge. Do not include final answers, conclusions, calculations, code, or detailed execution steps.
+Return only JSON:
+{{
+  "strategies": [
+    "Strategy 1: ..."
+  ]
+}}
+</Initial Strategy Generation Request>"""
 
 
 def sub_strategy_prompt(challenge: str, current: dict[str, Any], all_strategies: list[dict[str, Any]], count: int) -> str:
@@ -100,7 +42,7 @@ def sub_strategy_prompt(challenge: str, current: dict[str, Any], all_strategies:
     return f"""Core Challenge:
 {challenge}
 
-<Assigned Main Strategy id="{current['id']}">
+<Assigned Main Strategy>
 {current['text']}
 </Assigned Main Strategy>
 
@@ -108,14 +50,21 @@ def sub_strategy_prompt(challenge: str, current: dict[str, Any], all_strategies:
 {others or 'No other strategies.'}
 </Other Main Strategies For Awareness>
 
-Generate exactly {count} narrower independent sub-strategy interpretations.
-Return JSON:
-{{"sub_strategies": ["Sub-strategy 1: ..."]}}"""
+<Sub-Strategy Generation Request>
+Generate exactly {count} genuinely distinct high-level sub-strategy interpretations within the assigned main strategy.
+Do not solve the challenge. Do not output detailed execution plans.
+Return only JSON:
+{{
+  "sub_strategies": [
+    "Sub-strategy 1: ..."
+  ]
+}}
+</Sub-Strategy Generation Request>"""
 
 
 def hypothesis_generation_prompt(challenge: str, count: int, mode: str, strategy_context: str, previous: str = "") -> str:
     mapping = (
-        'Each hypothesis must include "target_strategies" as an array of main strategy ids. '
+        'Each hypothesis must include "target_strategies" as an array of strategy IDs. '
         "Use an empty array only for globally useful hypotheses."
         if mode == "selective_injection"
         else "Hypotheses may be globally useful and do not need strategy mappings."
@@ -124,30 +73,37 @@ def hypothesis_generation_prompt(challenge: str, count: int, mode: str, strategy
 {challenge}
 
 <Current Strategies>
-{strategy_context or 'Strategy context is not provided for this hypothesis mode.'}
+{strategy_context or 'Strategy context is not required for this hypothesis mode.'}
 </Current Strategies>
 
-<Previous Hypothesis Context>
-{previous or 'No previous hypothesis rounds.'}
-</Previous Hypothesis Context>
-
+<Hypothesis Generation Request>
 Generate exactly {count} hypotheses to investigate before execution.
-Do not solve the challenge. {mapping}
-
-Return JSON:
-{{"hypotheses": [{{"text": "Hypothesis text", "target_strategies": ["main1"]}}]}}"""
+Do not solve the Core Challenge and do not include final answers.
+{mapping}
+Return only JSON:
+{{
+  "hypotheses": [
+    {{
+      "text": "Hypothesis text",
+      "target_strategies": ["main1"]
+    }}
+  ]
+}}
+</Hypothesis Generation Request>"""
 
 
 def hypothesis_test_prompt(challenge: str, hypothesis: dict[str, Any]) -> str:
     return f"""Core Challenge:
 {challenge}
 
-<Hypothesis To Test id="{hypothesis['id']}">
+<Assigned Hypothesis To Test>
 {hypothesis['text']}
-</Hypothesis To Test>
+</Assigned Hypothesis To Test>
 
-Test only this hypothesis. Do not use strategy context. Attempt validation and refutation.
-End with one classification: VALIDATED, REFUTED, or INCONCLUSIVE."""
+<Hypothesis Testing Request>
+Investigate this hypothesis rigorously and independently. Attempt validation and refutation, test edge cases, and report only findings about the hypothesis.
+Do not solve the Core Challenge unless the hypothesis explicitly requires checking a proposed answer.
+</Hypothesis Testing Request>"""
 
 
 def information_packet(hypotheses: list[dict[str, Any]], tests: dict[str, str]) -> str:
@@ -159,9 +115,8 @@ def information_packet(hypotheses: list[dict[str, Any]], tests: dict[str, str]) 
         target_text = ", ".join(targets) if targets else "all"
         entries.append(
             f"""<Hypothesis {index}>
-ID: {hyp['id']}
-Target Strategies: {target_text}
 Hypothesis: {hyp['text']}
+Target Strategies: {target_text}
 Hypothesis Testing: {tests.get(hyp['id'], 'Not tested.')}
 </Hypothesis {index}>"""
         )
@@ -176,42 +131,85 @@ def strategy_specific_packets(strategies: list[dict[str, Any]], hypotheses: list
             for hyp in hypotheses
             if not hyp.get("target_strategy_ids") or strategy["id"] in hyp.get("target_strategy_ids", [])
         ]
-        packets[strategy["id"]] = information_packet(selected, tests)
+        if selected:
+            body = "\n\n".join(
+                f"""<Hypothesis {hyp['id']}>
+Hypothesis: {hyp['text']}
+Hypothesis Testing: {tests.get(hyp['id'], 'No testing output available')}
+</Hypothesis {hyp['id']}>"""
+                for hyp in selected
+            )
+        else:
+            body = "No active strategy-specific hypotheses are currently available for this strategy."
+        packets[strategy["id"]] = (
+            f"<Strategy-Specific Information Packet for Strategy {strategy['id']}>\n"
+            f"{body}\n"
+            f"</Strategy-Specific Information Packet for Strategy {strategy['id']}>"
+        )
     return packets
 
 
 def execution_prompt(challenge: str, branch: dict[str, Any], all_strategies: list[dict[str, Any]], packet: str) -> str:
-    others = "\n\n".join(f"{s['id']}: {s['text']}" for s in all_strategies if s["id"] != branch["main_strategy_id"])
+    others = "\n\n".join(
+        f"""<Strategy-{s['id']} branchVersion="{s.get('branch_version', 1)}">
+{s['text']}
+</Strategy-{s['id']}>"""
+        for s in all_strategies
+        if s["id"] != branch["main_strategy_id"]
+    )
+    branch_context = (
+        f"""<BranchIdentity strategy="{branch['main_strategy_id']}" branchVersion="{branch.get('branch_version', 1)}" branchIterationCount="{branch.get('branch_iteration_count', 0)}" />"""
+        if branch.get("branch_version")
+        else "No prior branch-local execution context exists yet."
+    )
     return f"""Core Challenge:
 {challenge}
 
-<Assigned Main Strategy id="{branch['main_strategy_id']}">
+<Assigned Strategy Text>
+{branch['main_strategy_text']}
+</Assigned Strategy Text>
+
+-------------------------------------------------------------------------------
+<Context From Other Strategies>
+{others or 'No cross-strategy context is available for this execution.'}
+</Context From Other Strategies>
+
+-------------------------------------------------------------------------------
+<Strategy-Aware Selective Knowledge Packet>
+{packet}
+</Strategy-Aware Selective Knowledge Packet>
+
+<Execution Request>
+Execute the assigned framework completely and faithfully. Do not switch strategies. Produce the full solution attempt for this assigned framework.
+</Execution Request>
+
+-------------------------------------------------------------------------------
+<Relevant Context For Your Current Strategy>
+This is all the relevant context related to your current strategy. Treat this as your primary identity, constraint set, and final context anchor.
+
+<Assigned Main Strategy>
 {branch['main_strategy_text']}
 </Assigned Main Strategy>
 
-<Assigned Sub Strategy id="{branch['id']}">
+<Assigned Sub-Strategy Or Direct Strategy>
 {branch['sub_strategy_text']}
-</Assigned Sub Strategy>
+</Assigned Sub-Strategy Or Direct Strategy>
 
-<Other Main Strategies For Awareness>
-{others or 'No other main strategies.'}
-</Other Main Strategies For Awareness>
-
-{packet}
-
-Execute the assigned branch faithfully and completely."""
+{branch_context}
+</Relevant Context For Your Current Strategy>"""
 
 
 def critique_prompt(challenge: str, branch: dict[str, Any], solution: str, history: list[dict[str, Any]] | None = None) -> str:
     recent = dumps((history or [])[-5:])
-    return f"""Core Challenge:
+    if history:
+        return f"""Core Challenge:
 {challenge}
 
 <Assigned Strategy id="{branch['main_strategy_id']}" branchVersion="{branch.get('branch_version', 1)}">
 {branch['main_strategy_text']}
 </Assigned Strategy>
 
-<Critique Target>
+<Critique Target globalIteration="{branch.get('global_iteration', 0)}" branchIteration="{branch.get('branch_iteration_count', 1)}">
 {solution}
 </Critique Target>
 
@@ -219,8 +217,25 @@ def critique_prompt(challenge: str, branch: dict[str, Any], solution: str, histo
 {recent}
 </Recent Branch History>
 
-Critique the target solution only. Verify strategy fidelity first, then execution quality.
-Do not suggest fixes."""
+Your task is to critique the target solution only. Verify strategy fidelity first, then execution quality. Do not suggest fixes."""
+    return f"""Core Challenge:
+{challenge}
+
+<Main Strategy>
+{branch['main_strategy_text']}
+</Main Strategy>
+
+<Sub-Strategy id="{branch.get('id', branch['main_strategy_id'])}">
+{branch.get('sub_strategy_text', branch['main_strategy_text'])}
+</Sub-Strategy>
+
+<Solution Attempt To Critique>
+{solution}
+</Solution Attempt To Critique>
+
+<Critique Request>
+Critique this solution attempt for correctness, rigor, completeness, strategy fidelity, and unresolved issues. Do not produce the corrected solution.
+</Critique Request>"""
 
 
 def correction_prompt(
@@ -235,74 +250,98 @@ def correction_prompt(
     global_iteration: int | None = None,
     branch_iteration: int | None = None,
 ) -> str:
-    iter_context = ""
     if global_iteration is not None:
-        iter_context = f"""<EvolvingDepthFirstSearchCorrectionContext>
+        repo = split_repository_context(repository or correction_repository(branch, [branch]))
+        return f"""Core Challenge:
+{challenge}
+
+<Assigned Strategy Text>
+{branch['main_strategy_text']}
+</Assigned Strategy Text>
+
+<EvolvingDepthFirstSearchCorrectionContext>
 Global iteration: {global_iteration}
 Assigned strategy: {branch['main_strategy_id']}
 Assigned branch version: {branch.get('branch_version', 1)}
 Assigned branch-local iteration to produce: {branch_iteration}
-</EvolvingDepthFirstSearchCorrectionContext>"""
-    return f"""Core Challenge:
-{challenge}
+</EvolvingDepthFirstSearchCorrectionContext>
 
-<Assigned Strategy>
-{branch['main_strategy_text']}
-</Assigned Strategy>
+<Correction Request>
+Produce the next corrected solution for the assigned strategy. Work inside the assigned strategy only. Use the current strategy's memory bank, branch history, latest critique, and latest solution pool when available. Other strategies are included only as latest correction plus latest critique for situational awareness.
+</Correction Request>
 
-{iter_context}
+{repo['other_context']}
 
-<Previous Solution Attempt>
-{solution}
-</Previous Solution Attempt>
-
-<Critique>
-{critique}
-</Critique>
-
-<Shared Critique Synthesis>
-{synthesis or 'Not available.'}
-</Shared Critique Synthesis>
-
-<Full Solution Context>
-{full_context or 'Not available.'}
-</Full Solution Context>
-
+{SECTION_SEPARATOR}
 <Strategy-Aware Selective Knowledge Packet>
 {packet or 'Not available.'}
 </Strategy-Aware Selective Knowledge Packet>
 
-<Curated Evolving DFS Repository>
-{repository or 'Not available.'}
-</Curated Evolving DFS Repository>
+{SECTION_SEPARATOR}
+{repo['current_context']}"""
+    solution_section = "".join(
+        [
+            critique or "No critique available.",
+            f"\n\n<Dissected Observations Synthesis>\n{synthesis}\n</Dissected Observations Synthesis>" if synthesis else "",
+            f"\n\n<All Solutions Context>\n{full_context}\n</All Solutions Context>" if full_context else "",
+        ]
+    )
+    sub_strategy_text = branch.get("sub_strategy_text", branch["main_strategy_text"])
+    return f"""Original Problem:
+{challenge}
 
-Produce the next corrected complete solution. Work inside the assigned strategy only."""
+<Assigned Main Strategy>
+{branch['main_strategy_text']}
+</Assigned Main Strategy>
+
+<Assigned Sub-Strategy>
+{sub_strategy_text}
+</Assigned Sub-Strategy>
+
+<Original Solution Attempt>
+{solution}
+</Original Solution Attempt>
+
+<Correction Context>
+{solution_section}
+</Correction Context>
+
+<Self-Improvement Request>
+Produce the corrected final solution for this assigned strategy/sub-strategy. Address the critique directly. Preserve strategy fidelity and output the full corrected solution.
+</Self-Improvement Request>"""
 
 
 def synthesis_prompt(challenge: str, branches: list[dict[str, Any]], packet: str = "") -> str:
     lines = []
     for branch in branches:
         lines.append(
-            f"""<Candidate id="{branch['id']}">
-<MainStrategy>{branch['main_strategy_text']}</MainStrategy>
-<SubStrategy>{branch['sub_strategy_text']}</SubStrategy>
-<OriginalSolution>{branch.get('solution', '')}</OriginalSolution>
-<Critique>{branch.get('critique', '')}</Critique>
-</Candidate>"""
+            f"""<Strategy id="{branch['main_strategy_id']}">
+{branch['main_strategy_text']}
+<SubStrategy id="{branch['id']}">
+{branch['sub_strategy_text']}
+<SolutionAttempt>
+{branch.get('solution', '')}
+</SolutionAttempt>
+<Critique>
+{branch.get('critique', 'No critique available.')}
+</Critique>
+</SubStrategy>
+</Strategy>"""
         )
-    return f"""Core Challenge:
+    return f"""Original Problem:
 {challenge}
 
-<Original Solutions And Critiques>
-{chr(10).join(lines)}
-</Original Solutions And Critiques>
+<Information Packet>
+{packet or 'Hypothesis exploration sharing is disabled for dissected observations.'}
+</Information Packet>
 
-<Hypothesis Packet>
-{packet or 'Not included.'}
-</Hypothesis Packet>
+<Solutions With Critiques>
+{chr(10).join(lines) or 'No solution attempts available.'}
+</Solutions With Critiques>
 
-Consolidate recurring failures, domain-specific problems, assumptions, missing elements,
-and conflicts between critiques. Do not produce corrected solutions."""
+<Synthesis Request>
+Synthesize the critiques into a concise, rigorous correction brief. Resolve conflicts by prioritizing the most concrete, logically supported critique. Do not solve from scratch.
+</Synthesis Request>"""
 
 
 def full_solution_context(branches: list[dict[str, Any]], assigned_id: str) -> str:
@@ -321,19 +360,29 @@ def full_solution_context(branches: list[dict[str, Any]], assigned_id: str) -> s
 
 def final_judge_prompt(challenge: str, candidates: list[dict[str, Any]]) -> str:
     candidate_text = "\n\n".join(
-        f"""<Candidate id="{candidate['id']}" mainStrategyId="{candidate['main_strategy_id']}" subStrategy="{candidate['sub_strategy_text']}">
-{candidate['solution']}
-</Candidate>"""
-        for candidate in candidates
+        "\n".join(
+            [
+                f"<SOLUTION_{index + 1}>",
+                f"ID: {candidate['id']}",
+                f"Main Strategy: {candidate['main_strategy_id']}",
+                f"Sub-Strategy: {candidate['sub_strategy_text']}",
+                "Solution Text:",
+                candidate["solution"],
+                f"</SOLUTION_{index + 1}>",
+            ]
+        )
+        for index, candidate in enumerate(candidates)
     )
-    return f"""Core Challenge:
+    return f"""Original Challenge:
 {challenge}
 
-<Candidate Solutions>
-{candidate_text}
-</Candidate Solutions>
+Below are {len(candidates)} candidate solutions from different strategic approaches. Select the single overall best solution.
 
-Select the best solution. Compare only the candidate solution texts above."""
+Return JSON:
+{{"best_solution_id":"ID of the winning solution","final_reasoning":"Detailed comparison based only on provided texts"}}
+
+{candidate_text}
+"""
 
 
 def format_branch_history(entries: list[dict[str, Any]]) -> str:
@@ -377,9 +426,14 @@ def correction_repository(current: dict[str, Any], all_branches: list[dict[str, 
 <LatestCritique>{branch.get('latest_critique', '')}</LatestCritique>
 </Strategy-{branch['id']}>"""
         )
+    memory_block = (
+        f"<MemoryBank For Strategy {current['id']}>\n{current.get('memory_bank')}\n</MemoryBank For Strategy {current['id']}>"
+        if current.get("memory_bank")
+        else ""
+    )
     current_block = f"""<Strategy-{current['id']} branchVersion="{current.get('branch_version', 1)}" assigned="true">
 <StrategyText>{current['main_strategy_text']}</StrategyText>
-<MemoryBank>{current.get('memory_bank') or 'Not available.'}</MemoryBank>
+{memory_block}
 <LatestCorrectionOrExecution>{current.get('latest_solution', '')}</LatestCorrectionOrExecution>
 <LatestCritique>{current.get('latest_critique', '')}</LatestCritique>
 <BranchHistory last="{max_history}">
@@ -387,13 +441,23 @@ def correction_repository(current: dict[str, Any], all_branches: list[dict[str, 
 </BranchHistory>
 <LatestStrategySolutionPool>{current.get('latest_pool') or 'Not available.'}</LatestStrategySolutionPool>
 </Strategy-{current['id']}>"""
-    return f"""<Context From Other Strategies>
+    return f"""<Context From Other Strategies For Cross-Learning, Synthesis, Gap Anticipation, Critique Anticipation, And Orthogonality>
 {chr(10).join(other) if other else 'No other strategy context is available.'}
-</Context From Other Strategies>
-
+</Context From Other Strategies For Cross-Learning, Synthesis, Gap Anticipation, Critique Anticipation, And Orthogonality>
+{REPOSITORY_CURRENT_CONTEXT_MARKER}
 <Relevant Context For Your Current Strategy>
+This is all the relevant context related to your current strategy. Treat this as your primary identity, branch memory, and correction anchor.
+{SECTION_SEPARATOR}
 {current_block}
 </Relevant Context For Your Current Strategy>"""
+
+
+def split_repository_context(repository: str) -> dict[str, str]:
+    other, marker, current = repository.partition(REPOSITORY_CURRENT_CONTEXT_MARKER)
+    return {
+        "other_context": other.strip() or "No cross-strategy context is available.",
+        "current_context": current.strip() if marker else repository.strip() or "No current-strategy context is available.",
+    }
 
 
 def solution_pool_prompt(challenge: str, current: dict[str, Any], all_branches: list[dict[str, Any]], packet: str, global_iteration: int) -> str:
@@ -407,17 +471,28 @@ def solution_pool_prompt(challenge: str, current: dict[str, Any], all_branches: 
 <LatestSolutionPool>{branch.get('latest_pool') or 'Not available.'}</LatestSolutionPool>
 </Strategy-{branch['id']}>"""
         )
+    memory_block = (
+        f"<MemoryBank For Strategy {current['id']}>\n{current.get('memory_bank')}\n</MemoryBank For Strategy {current['id']}>"
+        if current.get("memory_bank")
+        else ""
+    )
+    branch_history_status = "" if current.get("history") else "<BranchHistory>Status: this branch has no completed correction history yet.</BranchHistory>"
     current_block = f"""<Strategy-{current['id']} branchVersion="{current.get('branch_version', 1)}" assigned="true">
 <StrategyText>{current['main_strategy_text']}</StrategyText>
-<MemoryBank>{current.get('memory_bank') or 'Not available.'}</MemoryBank>
+{memory_block}
 <LatestCorrectionOrExecution>{current.get('latest_solution', '')}</LatestCorrectionOrExecution>
 <LatestCritique>{current.get('latest_critique', '')}</LatestCritique>
 <PoolHistory last="5">
 {format_pool_history(current.get('pool_history', [])[-5:])}
 </PoolHistory>
+{branch_history_status}
 </Strategy-{current['id']}>"""
     return f"""Core Challenge:
 {challenge}
+
+<Assigned Strategy Text>
+{current['main_strategy_text']}
+</Assigned Strategy Text>
 
 <EvolvingDepthFirstSearchSolutionPoolContext>
 Global iteration: {global_iteration}
@@ -426,19 +501,25 @@ Assigned branch version: {current.get('branch_version', 1)}
 Current branch-local iteration: {current.get('branch_iteration_count', 1)}
 </EvolvingDepthFirstSearchSolutionPoolContext>
 
-<Context From Other Strategies>
-{chr(10).join(other) if other else 'No other strategy solution-pool context is available.'}
-</Context From Other Strategies>
+<Solution Pool Request>
+Generate the solution pool for the assigned strategy. Use only the assigned strategy's latest correction/execution, latest critique, memory bank if present, and last solution pool outputs for the assigned strategy. Other strategies are represented only by their latest full pool outputs.
+</Solution Pool Request>
 
+<Context From Other Strategies For Cross-Learning, Synthesis, Gap Anticipation, Critique Anticipation, And Orthogonality>
+{chr(10).join(other) if other else 'No other strategy solution-pool context is available.'}
+</Context From Other Strategies For Cross-Learning, Synthesis, Gap Anticipation, Critique Anticipation, And Orthogonality>
+
+{SECTION_SEPARATOR}
 <Strategy-Aware Selective Knowledge Packet>
 {packet or 'Not available.'}
 </Strategy-Aware Selective Knowledge Packet>
 
+{SECTION_SEPARATOR}
 <Relevant Context For Your Current Strategy>
+This is all the relevant context related to your current strategy. Treat this as your primary identity, branch memory, and pool-generation anchor.
+{SECTION_SEPARATOR}
 {current_block}
-</Relevant Context For Your Current Strategy>
-
-Generate exactly five solution-pool entries. Return JSON with a "solutions" array."""
+</Relevant Context For Your Current Strategy>"""
 
 
 def memory_prompt(challenge: str, branch: dict[str, Any], window: list[dict[str, Any]], start: int, end: int) -> str:
@@ -457,8 +538,16 @@ def memory_prompt(challenge: str, branch: dict[str, Any], window: list[dict[str,
 {format_branch_history(window)}
 </Raw Branch History To Distill>
 
-Create one unified memory bank for this strategy branch. If a previous memory bank
-exists, recursively merge it with the new raw history so earlier lessons are not lost."""
+Create one unified memory bank for this strategy branch. Do not summarize the prose of solutions. Summarize the exploration space:
+- Validated Invariants
+- Dead Ends
+- Persistent Flaws
+- Useful Techniques
+- Refuted Assumptions
+- Open Questions
+- Branch-Level Guidance For Future Corrections
+
+If a previous memory bank is provided, recursively merge it with the new raw history so no earlier lessons are lost."""
 
 
 def pqf_prompt(challenge: str, group_index: int, group_count: int, group: list[dict[str, Any]], all_branches: list[dict[str, Any]], aggressiveness: str) -> str:
@@ -488,10 +577,19 @@ history for these strategies only.
 {chr(10).join(sections)}
 </PQF Group>
 
-Return JSON:
-{{"analysis_summary":"short summary","strategies":[{{"strategy_id":"main1","decision":"keep","reasoning":"..."}}]}}
+Return only JSON:
+{{
+  "analysis_summary": "short summary",
+  "strategies": [
+    {{
+      "strategy_id": "main1",
+      "decision": "keep",
+      "reasoning": "evidence-based reason"
+    }}
+  ]
+}}
 
-Decision must be exactly "keep" or "update"."""
+Decision must be exactly "keep" or "update". Mark update only when the branch's strategy should be replaced by a new branch, not when ordinary correction can fix execution errors."""
 
 
 def strategy_update_prompt(challenge: str, decisions: list[dict[str, Any]], all_branches: list[dict[str, Any]], archives: list[dict[str, Any]]) -> str:
@@ -532,9 +630,17 @@ def strategy_update_prompt(challenge: str, decisions: list[dict[str, Any]], all_
 {chr(10).join(failed_context)}
 </Failed Strategy Context For Updates>
 
-Generate exactly one replacement strategy for every strategy marked update.
-Return JSON:
-{{"strategies":[{{"strategy_id":"main1","strategy":"Replacement strategy text"}}]}}"""
+Generate exactly one replacement strategy for every strategy marked "update". Keep the same strategy_id slot, but the text must be a genuinely new branch that avoids the failed strategy's conceptual trap.
+
+Return only JSON:
+{{
+  "strategies": [
+    {{
+      "strategy_id": "main1",
+      "strategy": "Replacement strategy text"
+    }}
+  ]
+}}"""
 
 
 def hypothesis_refresh_prompt(
@@ -556,7 +662,7 @@ def hypothesis_refresh_prompt(
 </Strategy>"""
         )
     update_note = (
-        f"Strategies recently updated and needing fresh targeted hypotheses: {', '.join(updated_strategy_ids)}."
+        f"Strategies recently updated and needing fresh targeted hypotheses: {', '.join(updated_strategy_ids)}. Flush old slot-specific assumptions for these strategies."
         if updated_strategy_ids
         else "No strategies were recently updated."
     )
@@ -581,6 +687,14 @@ Mode: selective, strategy-aware routing only.
 {update_note}
 </Strategy Update Note>
 
-Return JSON:
-{{"hypotheses":[{{"text":"Hypothesis text","target_strategies":["main1"]}}]}}"""
+Return only JSON:
+{{
+  "hypotheses": [
+    {{
+      "text": "Hypothesis text",
+      "target_strategies": ["main1"]
+    }}
+  ]
+}}
 
+Use empty target_strategies only for globally useful hypotheses. Do not solve the original challenge or embed assumed final answers."""

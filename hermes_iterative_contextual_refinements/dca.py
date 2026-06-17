@@ -9,10 +9,12 @@ from .config import ICRConfig
 from .json_utils import utc_now_iso
 from .llm import ICRLlm
 from .schemas import DCA_LOCAL_SCHEMA, DCA_POOL_SCHEMA
+from .source_prompts import load_dca_prompts
 
 
-POOL_GENERATOR_PROMPT = "You are the DCA Pool Generator. Produce orthogonal high-level solution alternatives with priority 2-5."
-LOCAL_POOL_PROMPT = "You are a DCA Local Pool Agent. Evolve the assigned solution locally into concrete child alternatives."
+_DCA_SOURCE_PROMPTS = load_dca_prompts()
+POOL_GENERATOR_PROMPT = _DCA_SOURCE_PROMPTS["pool_generator"]
+LOCAL_POOL_PROMPT = _DCA_SOURCE_PROMPTS["local_pool_agent"]
 
 
 class DCAEngine:
@@ -31,7 +33,7 @@ class DCAEngine:
             role="dca_pool_generator",
             purpose="dca.pool_generator",
             instructions="Return JSON with a solutions array.",
-            prompt=f"Problem:\n{problem}\n\nGenerate up to {self.config.dca_pool_limit} orthogonal solutions.",
+            prompt=problem,
             schema=DCA_POOL_SCHEMA,
             system_prompt=POOL_GENERATOR_PROMPT,
         )
@@ -57,17 +59,18 @@ class DCAEngine:
                 for other in layer
                 if other["id"] != solution["id"]
             )
+            local_system_prompt = (
+                LOCAL_POOL_PROMPT.replace("{{solutionId}}", solution["id"])
+                .replace("{{priority}}", str(solution["priority"]))
+                .replace("{{fullPool}}", full_pool)
+            )
             local = self.llm.structured(
                 role="dca_local_pool_agent",
                 purpose="dca.local_pool_agent",
                 instructions="Return JSON with an evolutions array.",
-                prompt=(
-                    f"Problem:\n{problem}\n\nAssigned solution {solution['id']} priority {solution['priority']}:\n"
-                    f"{solution['title']}: {solution['content']}\n\nFull peer pool:\n{full_pool}\n\n"
-                    f"Generate {solution['priority']} local evolutions."
-                ),
+                prompt=f"Evolve solution {solution['id']}",
                 schema=DCA_LOCAL_SCHEMA,
-                system_prompt=LOCAL_POOL_PROMPT,
+                system_prompt=local_system_prompt,
             )
             children = []
             for evo_idx, evo in enumerate((local.get("evolutions") or [])[: solution["priority"]]):

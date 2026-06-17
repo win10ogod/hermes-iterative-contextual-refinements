@@ -15,6 +15,9 @@ dependencies = []
 [project.optional-dependencies]
 dev = ["pytest>=8"]
 
+[project.scripts]
+icr-prompt-parity = "hermes_iterative_contextual_refinements.prompt_parity:main"
+
 [project.entry-points."hermes_agent.plugins"]
 hermes-iterative-contextual-refinements = "hermes_iterative_contextual_refinements:register"
 
@@ -22,9 +25,8 @@ hermes-iterative-contextual-refinements = "hermes_iterative_contextual_refinemen
 packages = ["hermes_iterative_contextual_refinements"]
 
 [tool.setuptools.package-data]
-hermes_iterative_contextual_refinements = ["skills/*/SKILL.md"]
+hermes_iterative_contextual_refinements = ["skills/*/SKILL.md", "source_prompts/*.ts"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
-

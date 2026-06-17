@@ -10,6 +10,7 @@ from .config import ICRConfig
 from .deepthink import DeepthinkEngine
 from .llm import ICRLlm
 from .schemas import ADAPTIVE_ORCHESTRATOR_SCHEMA
+from .source_prompts import load_adaptive_prompts
 
 
 ADAPTIVE_TOOLS = [
@@ -51,6 +52,8 @@ ADAPTIVE_TOOLS = [
     {"name": "Exit", "description": "Finish after a final solution has been selected.", "parameters": {"note": "optional string"}},
 ]
 
+ADAPTIVE_ORCHESTRATOR_PROMPT = load_adaptive_prompts()["main"]
+
 
 class AdaptiveDeepthinkEngine:
     def __init__(self, llm: ICRLlm, record: dict[str, Any], config: ICRConfig):
@@ -77,10 +80,7 @@ class AdaptiveDeepthinkEngine:
                 instructions=prompts.JSON_ONLY,
                 prompt=self._orchestrator_prompt(challenge),
                 schema=ADAPTIVE_ORCHESTRATOR_SCHEMA,
-                system_prompt=(
-                    "You are the Adaptive Deepthink orchestration agent. Select the next tools to call. "
-                    "Use only the provided tool names. Call Exit after SelectBestSolution succeeds."
-                ),
+                system_prompt=ADAPTIVE_ORCHESTRATOR_PROMPT,
             )
             tool_calls = decision.get("tool_calls") or []
             if not tool_calls and self.state.get("selected_solution"):
