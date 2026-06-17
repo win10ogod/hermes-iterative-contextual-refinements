@@ -1106,6 +1106,9 @@ def _model_parameters(config: dict[str, Any], mode: str) -> dict[str, Any]:
         "evolvingDfsEnabled": mode == "evolving_deepthink",
         "evolvingDfsDepth": config.get("evolving_depth", 3),
         "provideAllSolutionsToCorrectors": config.get("full_solution_context", False),
+        "modelCallTimeoutSeconds": config.get("model_call_timeout_seconds"),
+        "modelCallTimeoutRetrySeconds": config.get("model_call_timeout_retry_seconds"),
+        "modelCallTimeoutKwarg": config.get("model_call_timeout_kwarg"),
     }
 
 

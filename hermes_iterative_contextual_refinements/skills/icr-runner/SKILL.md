@@ -58,8 +58,26 @@ Do not lower capability to make a run faster. The plugin validates ICR limits:
 - Evolving DFS depth: 1-10.
 - Max API attempts: 4.
 - Deepthink retry delays default to 20, 40, 80 seconds.
+- Main model timeout is configurable with `model_call_timeout_seconds`; omit it or set `0` to keep the Hermes host default.
+- If a host/provider timeout happens, retries use `model_call_timeout_retry_seconds` unless it is set to `0`.
 
 If a faster diagnostic run is needed, explicitly say it is a diagnostic run and keep its config visible in the run artifact.
+
+## Main Model Timeouts
+
+For long ICR prompts, prefer explicit timeout configuration over reducing strategy counts, hypotheses, context, or prompts:
+
+```json
+{
+  "config": {
+    "model_call_timeout_seconds": 900,
+    "model_call_timeout_retry_seconds": 1800,
+    "model_call_timeout_kwarg": "timeout_seconds"
+  }
+}
+```
+
+Use `model_call_timeout_kwarg` only to match the host provider interface. Supported values are `timeout_seconds`, `timeout`, `request_timeout`, and `read_timeout`.
 
 ## Python-Assisted Roles
 

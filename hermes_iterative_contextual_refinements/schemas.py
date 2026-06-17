@@ -88,6 +88,21 @@ def icr_config_schema() -> dict:
             "dca_pool_limit": {"type": "integer", "minimum": 1},
             "python_execution_enabled": {"type": "boolean"},
             "python_execution_timeout_seconds": {"type": "number", "exclusiveMinimum": 0},
+            "model_call_timeout_seconds": {
+                "type": "number",
+                "minimum": 0,
+                "description": "Optional per-call timeout for host LLM requests. 0 or omitted keeps the host default.",
+            },
+            "model_call_timeout_retry_seconds": {
+                "type": "number",
+                "minimum": 0,
+                "description": "Timeout applied on retries after a timeout error. 0 disables timeout retry override.",
+            },
+            "model_call_timeout_kwarg": {
+                "type": "string",
+                "enum": ["timeout_seconds", "timeout", "request_timeout", "read_timeout"],
+                "description": "Keyword used when passing the timeout to ctx.llm.",
+            },
             "python_execution_roles": {
                 "oneOf": [
                     {"type": "string", "description": "Single role or comma-separated roles."},

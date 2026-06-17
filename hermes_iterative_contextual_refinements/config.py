@@ -57,6 +57,9 @@ class ICRConfig:
     dca_pool_limit: int = 10
     python_execution_enabled: bool = False
     python_execution_timeout_seconds: float = 30.0
+    model_call_timeout_seconds: float | None = None
+    model_call_timeout_retry_seconds: float = 1200.0
+    model_call_timeout_kwarg: str = "timeout_seconds"
     python_execution_roles: tuple[str, ...] = (
         "hypothesis_testing",
         "solution_attempt",
@@ -92,6 +95,9 @@ class ICRConfig:
             "dca_pool_limit": self.dca_pool_limit,
             "python_execution_enabled": self.python_execution_enabled,
             "python_execution_timeout_seconds": self.python_execution_timeout_seconds,
+            "model_call_timeout_seconds": self.model_call_timeout_seconds,
+            "model_call_timeout_retry_seconds": self.model_call_timeout_retry_seconds,
+            "model_call_timeout_kwarg": self.model_call_timeout_kwarg,
             "python_execution_roles": list(self.python_execution_roles),
             "role_overrides": {
                 role: {
@@ -160,6 +166,24 @@ def _as_str_tuple(raw: Any, name: str, default: tuple[str, ...]) -> tuple[str, .
     return values
 
 
+def _as_optional_positive_float(raw: Any, name: str, default: float | None) -> float | None:
+    if raw is None or raw == "":
+        return default
+    value = float(raw)
+    if value < 0:
+        raise ValueError(f"{name} must be non-negative")
+    return value or None
+
+
+def _as_nonnegative_float(raw: Any, name: str, default: float) -> float:
+    if raw is None or raw == "":
+        return default
+    value = float(raw)
+    if value < 0:
+        raise ValueError(f"{name} must be non-negative")
+    return value
+
+
 def _parse_role_overrides(raw: Any) -> dict[str, RoleModelOverride]:
     if raw is None:
         return {}
@@ -214,6 +238,17 @@ def build_config(raw: dict[str, Any] | None, *, mode: str) -> ICRConfig:
         dca_pool_limit=_as_int(data.get("dca_pool_limit"), "dca_pool_limit", 10),
         python_execution_enabled=_as_bool(data.get("python_execution_enabled"), False),
         python_execution_timeout_seconds=float(data.get("python_execution_timeout_seconds", 30.0)),
+        model_call_timeout_seconds=_as_optional_positive_float(
+            data.get("model_call_timeout_seconds"),
+            "model_call_timeout_seconds",
+            None,
+        ),
+        model_call_timeout_retry_seconds=_as_nonnegative_float(
+            data.get("model_call_timeout_retry_seconds"),
+            "model_call_timeout_retry_seconds",
+            1200.0,
+        ),
+        model_call_timeout_kwarg=str(data.get("model_call_timeout_kwarg", "timeout_seconds") or "timeout_seconds"),
         python_execution_roles=_as_str_tuple(
             data.get("python_execution_roles"),
             "python_execution_roles",
@@ -255,6 +290,8 @@ def build_config(raw: dict[str, Any] | None, *, mode: str) -> ICRConfig:
         raise ValueError("dca_pool_limit must be between 1 and 10 to match upstream DCA")
     if cfg.python_execution_timeout_seconds <= 0:
         raise ValueError("python_execution_timeout_seconds must be positive")
+    if cfg.model_call_timeout_kwarg not in {"timeout_seconds", "timeout", "request_timeout", "read_timeout"}:
+        raise ValueError("model_call_timeout_kwarg must be timeout_seconds, timeout, request_timeout, or read_timeout")
     if not cfg.python_execution_roles:
         raise ValueError("python_execution_roles must contain at least one role when configured")
 

@@ -201,12 +201,46 @@ class PythonFakeLLM:
 
     def complete(self, messages, **kwargs):
         purpose = kwargs.get("purpose", "")
-        self.calls.append({"purpose": purpose, "messages": messages})
+        self.calls.append({"purpose": purpose, "messages": messages, "kwargs": kwargs})
         if purpose.endswith(".python_finalization"):
             assert "<Stdout>" in messages[-1]["content"]
             assert "42" in messages[-1]["content"]
             return TextResult("finalized with execution evidence")
         return TextResult("I will verify this.\n\n```python\nx = 40\nprint(x + 2)\n```")
+
+
+class TimeoutRecordingLLM(FakeLLM):
+    def __init__(self):
+        super().__init__()
+        self.text_kwargs = []
+        self.structured_kwargs = []
+
+    def complete(self, messages, **kwargs):
+        self.text_kwargs.append(dict(kwargs))
+        return super().complete(messages, **kwargs)
+
+    def complete_structured(self, *, instructions, input, json_schema=None, json_mode=False, schema_name=None, system_prompt=None, **kwargs):
+        self.structured_kwargs.append(dict(kwargs))
+        return super().complete_structured(
+            instructions=instructions,
+            input=input,
+            json_schema=json_schema,
+            json_mode=json_mode,
+            schema_name=schema_name,
+            system_prompt=system_prompt,
+            **kwargs,
+        )
+
+
+class TimeoutThenSuccessLLM:
+    def __init__(self):
+        self.calls = []
+
+    def complete(self, messages, **kwargs):
+        self.calls.append(dict(kwargs))
+        if len(self.calls) == 1:
+            raise TimeoutError("model request timed out")
+        return TextResult("ok")
 
 
 def test_plugin_registration_and_schemas(monkeypatch, tmp_path):
@@ -237,6 +271,7 @@ def test_plugin_registration_and_schemas(monkeypatch, tmp_path):
     config_schema = schema["parameters"]["properties"]["config"]
     assert config_schema["properties"]["max_api_attempts"]["const"] == 4
     assert config_schema["properties"]["python_execution_roles"]["oneOf"][0]["type"] == "string"
+    assert config_schema["properties"]["model_call_timeout_kwarg"]["enum"] == ["timeout_seconds", "timeout", "request_timeout", "read_timeout"]
 
 
 def test_source_prompt_resources_are_exact_copies():
@@ -510,11 +545,75 @@ def test_config_string_values_are_parsed_without_silent_truthiness():
     assert cfg.refinement is False
     assert cfg.python_execution_enabled is True
     assert cfg.python_execution_roles == ("solution_attempt", "self_improvement")
+    timeout_cfg = build_config(
+        {
+            "model_call_timeout_seconds": "900",
+            "model_call_timeout_retry_seconds": "1800",
+            "model_call_timeout_kwarg": "request_timeout",
+        },
+        mode="deepthink",
+    )
+    assert timeout_cfg.model_call_timeout_seconds == 900
+    assert timeout_cfg.model_call_timeout_retry_seconds == 1800
+    assert timeout_cfg.model_call_timeout_kwarg == "request_timeout"
 
     with pytest.raises(ValueError, match="contextual_retry_delays_seconds"):
         build_config({"contextual_retry_delays_seconds": [1]}, mode="contextual_refinement")
     with pytest.raises(ValueError, match="dca_pool_limit"):
         build_config({"dca_pool_limit": 11}, mode="dca")
+    with pytest.raises(ValueError, match="model_call_timeout_kwarg"):
+        build_config({"model_call_timeout_kwarg": "bad_timeout"}, mode="deepthink")
+
+
+def test_model_call_timeout_is_passed_to_text_and_structured_calls():
+    cfg = build_config(
+        {
+            "model_call_timeout_seconds": 777,
+            "model_call_timeout_kwarg": "timeout_seconds",
+            "retry_delays_seconds": [0, 0, 0],
+        },
+        mode="deepthink",
+    )
+    record = {"run_id": "timeout-run", "llm_calls": [], "usage": {}, "artifacts": {}}
+    fake = TimeoutRecordingLLM()
+    llm = ICRLlm(fake, record, cfg)
+    try:
+        text = llm.complete(role="solution_attempt", purpose="unit.text_timeout", prompt="hello", system_prompt="system")
+        parsed = llm.structured(role="initial_strategy", purpose="unit.structured_timeout", instructions="json", prompt="{}", schema=None)
+    finally:
+        llm.close()
+
+    assert text == "Text response for unit.text_timeout."
+    assert parsed == {}
+    assert fake.text_kwargs[0]["timeout_seconds"] == 777
+    assert fake.structured_kwargs[0]["timeout_seconds"] == 777
+    assert record["llm_calls"][0]["attempts"][0]["timeout_seconds"] == 777
+    assert record["llm_calls"][1]["attempts"][0]["timeout_kwarg"] == "timeout_seconds"
+
+
+def test_timeout_retry_applies_longer_timeout_after_host_default_timeout():
+    cfg = build_config(
+        {
+            "retry_delays_seconds": [0, 0, 0],
+            "model_call_timeout_retry_seconds": 1234,
+        },
+        mode="deepthink",
+    )
+    record = {"run_id": "timeout-retry-run", "llm_calls": [], "usage": {}, "artifacts": {}}
+    fake = TimeoutThenSuccessLLM()
+    llm = ICRLlm(fake, record, cfg)
+    try:
+        result = llm.complete(role="solution_attempt", purpose="unit.timeout_retry", prompt="hello", system_prompt="system")
+    finally:
+        llm.close()
+
+    assert result == "ok"
+    assert "timeout_seconds" not in fake.calls[0]
+    assert fake.calls[1]["timeout_seconds"] == 1234
+    attempts = record["llm_calls"][0]["attempts"]
+    assert attempts[0]["is_timeout"] is True
+    assert attempts[1]["timeout_seconds"] == 1234
+    assert attempts[1]["status"] == "completed"
 
 
 def test_slash_run_parses_config_and_agentic_content():
@@ -551,6 +650,7 @@ def test_python_assisted_llm_executes_and_finalizes():
             "python_execution_enabled": True,
             "python_execution_timeout_seconds": 2,
             "python_execution_roles": ["solution_attempt"],
+            "model_call_timeout_seconds": 654,
         },
         mode="deepthink",
     )
@@ -573,4 +673,6 @@ def test_python_assisted_llm_executes_and_finalizes():
     assert record["llm_calls"][0]["python_executions"][0]["ok"] is True
     assert fake.calls[0]["purpose"] == "unit.python_assisted"
     assert fake.calls[1]["purpose"] == "unit.python_assisted.python_finalization"
+    assert fake.calls[0]["kwargs"]["timeout_seconds"] == 654
+    assert fake.calls[1]["kwargs"]["timeout_seconds"] == 654
     assert "Python execution is available" in fake.calls[0]["messages"][0]["content"]

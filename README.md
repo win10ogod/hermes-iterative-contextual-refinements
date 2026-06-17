@@ -77,12 +77,14 @@ hermes-iterative-contextual-refinements = "hermes_iterative_contextual_refinemen
   "mode": "evolving_deepthink",
   "challenge": "Design a robust migration plan for ...",
   "config": {
-    "main_strategies": 3,
-    "hypotheses": 2,
-    "evolving_depth": 6,
-    "python_execution_enabled": true,
-    "python_execution_roles": ["hypothesis_testing", "solution_attempt", "self_improvement"],
-    "retry_delays_seconds": [20, 40, 80]
+      "main_strategies": 3,
+      "hypotheses": 2,
+      "evolving_depth": 6,
+      "model_call_timeout_seconds": 900,
+      "model_call_timeout_retry_seconds": 1800,
+      "python_execution_enabled": true,
+      "python_execution_roles": ["hypothesis_testing", "solution_attempt", "self_improvement"],
+      "retry_delays_seconds": [20, 40, 80]
   }
 }
 ```
@@ -136,6 +138,8 @@ The plugin rejects invalid user configuration instead of silently reducing the r
 - DCA pool limit: `1-10`
 - Max model attempts: exactly `4`
 - Deepthink retry delays default to `20`, `40`, and `80` seconds
+- Main model call timeout override is explicit: omit `model_call_timeout_seconds` or set `0` to keep the Hermes host default; set a positive value to pass a timeout to `ctx.llm`.
+- After a timeout error, retries use `model_call_timeout_retry_seconds` (default `1200`) so long ICR prompts can recover from shorter host/provider defaults.
 - Evolving DFS forces selective hypothesis routing and PQF, recorded in the run config
 - Evolving DFS records the first hypothesis round at upstream `global_iteration: 0` and initial branch execution at global iteration `1`
 - Final judge receives candidate solution texts only, not internal search machinery
@@ -174,6 +178,22 @@ Enable Python only for roles that need executable verification or computation:
 ```
 
 Each role gets an isolated persistent session for the run, so variables created by one `solution_attempt` Python block remain available to later `solution_attempt` blocks in the same run, but not to other roles. Sessions are closed when the run finishes.
+
+## Main Model Timeouts
+
+ICR prompts can be large, especially with full upstream Deepthink prompts and hypothesis packets. If the host model call times out, configure the main model request timeout instead of reducing strategy counts or prompt content:
+
+```json
+{
+  "config": {
+    "model_call_timeout_seconds": 900,
+    "model_call_timeout_retry_seconds": 1800,
+    "model_call_timeout_kwarg": "timeout_seconds"
+  }
+}
+```
+
+`model_call_timeout_seconds` is passed from the first attempt. If it is omitted, the first attempt keeps the Hermes host default; if that attempt fails with a timeout, later retries pass `model_call_timeout_retry_seconds`. Supported timeout keyword names are `timeout_seconds`, `timeout`, `request_timeout`, and `read_timeout`; choose the one your Hermes LLM provider accepts.
 
 ## Role Model Overrides
 

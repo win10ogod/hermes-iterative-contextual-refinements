@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import time
 import threading
 import uuid
@@ -10,6 +11,9 @@ from typing import Any
 from .config import ICRConfig
 from .json_utils import as_text, parse_json_object, utc_now_iso
 from .python_runtime import PythonExecutionManager, extract_python_blocks, format_python_results
+
+
+_TIMEOUT_KWARG_ALIASES = ("timeout_seconds", "timeout", "request_timeout", "read_timeout")
 
 
 class ICRLlm:
@@ -31,6 +35,47 @@ class ICRLlm:
             "agent_id": override.agent_id,
             "profile": override.profile,
         }
+
+    def _timeout_for_attempt(self, previous_error: BaseException | None) -> float | None:
+        configured = self.config.model_call_timeout_seconds
+        if previous_error is not None and _is_timeout_error(previous_error):
+            retry_timeout = self.config.model_call_timeout_retry_seconds
+            if retry_timeout > 0:
+                return max(configured or 0.0, retry_timeout)
+        return configured
+
+    def _timeout_kwargs(self, method: Any, timeout_seconds: float | None) -> tuple[dict[str, Any], str | None]:
+        if timeout_seconds is None or timeout_seconds <= 0:
+            return {}, None
+        preferred = self.config.model_call_timeout_kwarg
+        try:
+            signature = inspect.signature(method)
+        except (TypeError, ValueError):
+            return {preferred: timeout_seconds}, preferred
+        params = signature.parameters
+        if preferred in params or any(param.kind == inspect.Parameter.VAR_KEYWORD for param in params.values()):
+            return {preferred: timeout_seconds}, preferred
+        for name in _TIMEOUT_KWARG_ALIASES:
+            if name in params:
+                return {name: timeout_seconds}, name
+        return {}, None
+
+    def _invoke_ctx(self, method: Any, args: tuple[Any, ...] = (), *, timeout_seconds: float | None = None, **kwargs: Any) -> tuple[Any, str | None]:
+        timeout_kwargs, timeout_kwarg = self._timeout_kwargs(method, timeout_seconds)
+        if timeout_seconds is not None and timeout_seconds > 0 and not timeout_kwargs:
+            raise RuntimeError(
+                f"ctx.llm method {getattr(method, '__name__', method)!r} does not accept a supported timeout keyword; "
+                "set model_call_timeout_kwarg to timeout_seconds, timeout, request_timeout, or read_timeout if the host supports one."
+            )
+        try:
+            return method(*args, **kwargs, **timeout_kwargs), timeout_kwarg
+        except TypeError as exc:
+            if timeout_kwargs and _looks_like_unexpected_timeout_kwarg(exc, next(iter(timeout_kwargs))):
+                raise RuntimeError(
+                    f"ctx.llm rejected timeout keyword {next(iter(timeout_kwargs))!r}; "
+                    "set config.model_call_timeout_kwarg to the keyword supported by this Hermes LLM provider."
+                ) from exc
+            raise
 
     def _usage_dict(self, result: Any) -> dict[str, Any]:
         usage = getattr(result, "usage", None)
@@ -79,13 +124,19 @@ class ICRLlm:
         messages.append({"role": "user", "content": prompt})
         last_error: BaseException | None = None
         for attempt in range(1, self.config.max_api_attempts + 1):
+            timeout_seconds = self._timeout_for_attempt(last_error)
+            attempt_data: dict[str, Any] = {"attempt": attempt, "timeout_seconds": timeout_seconds}
             try:
-                result = self.ctx_llm.complete(
-                    messages,
+                result, timeout_kwarg = self._invoke_ctx(
+                    self.ctx_llm.complete,
+                    (messages,),
+                    timeout_seconds=timeout_seconds,
                     temperature=temperature,
                     purpose=purpose,
                     **self._override_kwargs(role),
                 )
+                if timeout_kwarg:
+                    attempt_data["timeout_kwarg"] = timeout_kwarg
                 text = as_text(getattr(result, "text", ""))
                 usage = self._usage_dict(result)
                 self._accumulate_usage(usage)
@@ -97,6 +148,7 @@ class ICRLlm:
                         purpose=purpose,
                         messages=messages,
                         first_text=text,
+                        timeout_seconds=timeout_seconds,
                     )
                 call.update(
                     {
@@ -112,12 +164,14 @@ class ICRLlm:
                         **python_details,
                     }
                 )
-                call["attempts"].append({"attempt": attempt, "status": "completed"})
+                attempt_data["status"] = "completed"
+                call["attempts"].append(attempt_data)
                 self._record_call(call)
                 return final_text
             except BaseException as exc:
                 last_error = exc
-                call["attempts"].append({"attempt": attempt, "status": "error", "error": str(exc)})
+                attempt_data.update({"status": "error", "error": str(exc), "error_type": type(exc).__name__, "is_timeout": _is_timeout_error(exc)})
+                call["attempts"].append(attempt_data)
                 if attempt < self.config.max_api_attempts:
                     delay = self.config.retry_delays_seconds[attempt - 1]
                     if delay > 0:
@@ -155,6 +209,7 @@ class ICRLlm:
         purpose: str,
         messages: list[dict[str, Any]],
         first_text: str,
+        timeout_seconds: float | None,
     ) -> tuple[str, dict[str, Any]]:
         blocks = extract_python_blocks(first_text)
         if not blocks:
@@ -173,8 +228,10 @@ class ICRLlm:
                 ),
             }
         )
-        result = self.ctx_llm.complete(
-            followup_messages,
+        result, timeout_kwarg = self._invoke_ctx(
+            self.ctx_llm.complete,
+            (followup_messages,),
+            timeout_seconds=timeout_seconds,
             purpose=f"{purpose}.python_finalization",
             **self._override_kwargs(role),
         )
@@ -188,6 +245,8 @@ class ICRLlm:
                 "python_finalization_usage": usage,
                 "python_finalization_provider": getattr(result, "provider", ""),
                 "python_finalization_model": getattr(result, "model", ""),
+                "python_finalization_timeout_seconds": timeout_seconds,
+                "python_finalization_timeout_kwarg": timeout_kwarg,
             },
         )
 
@@ -217,8 +276,12 @@ class ICRLlm:
         }
         last_error: BaseException | None = None
         for attempt in range(1, self.config.max_api_attempts + 1):
+            timeout_seconds = self._timeout_for_attempt(last_error)
+            attempt_data: dict[str, Any] = {"attempt": attempt, "timeout_seconds": timeout_seconds}
             try:
-                result = self.ctx_llm.complete_structured(
+                result, timeout_kwarg = self._invoke_ctx(
+                    self.ctx_llm.complete_structured,
+                    timeout_seconds=timeout_seconds,
                     instructions=instructions,
                     input=[{"type": "text", "text": prompt}],
                     json_schema=schema,
@@ -229,6 +292,8 @@ class ICRLlm:
                     purpose=purpose,
                     **self._override_kwargs(role),
                 )
+                if timeout_kwarg:
+                    attempt_data["timeout_kwarg"] = timeout_kwarg
                 text = as_text(getattr(result, "text", ""))
                 parsed = getattr(result, "parsed", None)
                 if parsed is None:
@@ -250,12 +315,14 @@ class ICRLlm:
                         "audit": getattr(result, "audit", {}),
                     }
                 )
-                call["attempts"].append({"attempt": attempt, "status": "completed"})
+                attempt_data["status"] = "completed"
+                call["attempts"].append(attempt_data)
                 self._record_call(call)
                 return parsed
             except BaseException as exc:
                 last_error = exc
-                call["attempts"].append({"attempt": attempt, "status": "error", "error": str(exc)})
+                attempt_data.update({"status": "error", "error": str(exc), "error_type": type(exc).__name__, "is_timeout": _is_timeout_error(exc)})
+                call["attempts"].append(attempt_data)
                 if attempt < self.config.max_api_attempts:
                     delay = self.config.retry_delays_seconds[attempt - 1]
                     if delay > 0:
@@ -270,3 +337,25 @@ class ICRLlm:
         )
         self._record_call(call)
         raise RuntimeError(f"{purpose} failed after {self.config.max_api_attempts} attempts: {last_error}")
+
+
+def _is_timeout_error(exc: BaseException) -> bool:
+    name = type(exc).__name__.lower()
+    text = str(exc).lower()
+    return (
+        isinstance(exc, TimeoutError)
+        or "timeout" in name
+        or "timed out" in text
+        or "timeout" in text
+        or "deadline" in text
+    )
+
+
+def _looks_like_unexpected_timeout_kwarg(exc: TypeError, keyword: str) -> bool:
+    text = str(exc)
+    return keyword in text and (
+        "unexpected keyword" in text
+        or "got an unexpected" in text
+        or "invalid keyword" in text
+        or "not supported" in text
+    )
