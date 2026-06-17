@@ -120,20 +120,43 @@ def _as_int(raw: Any, name: str, default: int) -> int:
 def _as_bool(raw: Any, default: bool) -> bool:
     if raw is None:
         return default
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str):
+        normalized = raw.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+        raise ValueError(f"Invalid boolean value: {raw!r}")
     return bool(raw)
 
 
-def _as_delays(raw: Any, default: tuple[float, ...]) -> tuple[float, ...]:
+def _as_delays(raw: Any, default: tuple[float, ...], *, name: str, expected: int) -> tuple[float, ...]:
     if raw is None:
         return default
     if not isinstance(raw, (list, tuple)):
-        raise ValueError("retry delays must be a list of seconds")
+        raise ValueError(f"{name} must be a list of seconds")
     delays = tuple(float(item) for item in raw)
-    if len(delays) != 3:
-        raise ValueError("retry_delays_seconds must contain exactly three retry delays")
+    if len(delays) != expected:
+        raise ValueError(f"{name} must contain exactly {expected} retry delays")
     if any(delay < 0 for delay in delays):
-        raise ValueError("retry delays must be non-negative")
+        raise ValueError(f"{name} must contain only non-negative delays")
     return delays
+
+
+def _as_str_tuple(raw: Any, name: str, default: tuple[str, ...]) -> tuple[str, ...]:
+    if raw is None:
+        return default
+    if isinstance(raw, str):
+        values = tuple(part.strip() for part in raw.split(",") if part.strip())
+    elif isinstance(raw, (list, tuple)):
+        values = tuple(str(part).strip() for part in raw if str(part).strip())
+    else:
+        raise ValueError(f"{name} must be a string or list of strings")
+    if not values:
+        raise ValueError(f"{name} must contain at least one value")
+    return values
 
 
 def _parse_role_overrides(raw: Any) -> dict[str, RoleModelOverride]:
@@ -171,8 +194,18 @@ def build_config(raw: dict[str, Any] | None, *, mode: str) -> ICRConfig:
         pqf=_as_bool(data.get("pqf"), True),
         pqf_aggressiveness=str(data.get("pqf_aggressiveness", "balanced")).lower(),
         max_api_attempts=_as_int(data.get("max_api_attempts"), "max_api_attempts", MAX_API_ATTEMPTS),
-        retry_delays_seconds=_as_delays(data.get("retry_delays_seconds"), DEEPTHINK_RETRY_DELAYS_SECONDS),
-        contextual_retry_delays_seconds=tuple(float(x) for x in data.get("contextual_retry_delays_seconds", CONTEXTUAL_RETRY_DELAYS_SECONDS)),
+        retry_delays_seconds=_as_delays(
+            data.get("retry_delays_seconds"),
+            DEEPTHINK_RETRY_DELAYS_SECONDS,
+            name="retry_delays_seconds",
+            expected=3,
+        ),
+        contextual_retry_delays_seconds=_as_delays(
+            data.get("contextual_retry_delays_seconds"),
+            CONTEXTUAL_RETRY_DELAYS_SECONDS,
+            name="contextual_retry_delays_seconds",
+            expected=2,
+        ),
         contextual_iterations=_as_int(data.get("contextual_iterations"), "contextual_iterations", 3),
         contextual_condensation_interval=_as_int(data.get("contextual_condensation_interval"), "contextual_condensation_interval", 10),
         adaptive_max_tool_turns=_as_int(data.get("adaptive_max_tool_turns"), "adaptive_max_tool_turns", 16),
@@ -180,12 +213,16 @@ def build_config(raw: dict[str, Any] | None, *, mode: str) -> ICRConfig:
         dca_pool_limit=_as_int(data.get("dca_pool_limit"), "dca_pool_limit", 10),
         python_execution_enabled=_as_bool(data.get("python_execution_enabled"), False),
         python_execution_timeout_seconds=float(data.get("python_execution_timeout_seconds", 30.0)),
-        python_execution_roles=tuple(str(role) for role in data.get("python_execution_roles", (
-            "hypothesis_testing",
-            "solution_attempt",
-            "solution_critique",
-            "self_improvement",
-        ))),
+        python_execution_roles=_as_str_tuple(
+            data.get("python_execution_roles"),
+            "python_execution_roles",
+            (
+                "hypothesis_testing",
+                "solution_attempt",
+                "solution_critique",
+                "self_improvement",
+            ),
+        ),
         role_overrides=_parse_role_overrides(data.get("role_overrides")),
     )
 

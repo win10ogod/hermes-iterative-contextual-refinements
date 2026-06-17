@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import shlex
 from typing import Any
 
@@ -36,10 +37,7 @@ def parse_icr_args(raw: str) -> dict[str, Any]:
     args: dict[str, Any] = {"action": action}
     rest = tokens[1:]
     if action == "run":
-        if not rest:
-            raise ValueError("/icr run requires a mode and challenge text")
-        args["mode"] = rest[0]
-        args["challenge"] = " ".join(rest[1:])
+        args.update(_parse_run_args(rest))
     elif action == "status":
         if not rest:
             raise ValueError("/icr status requires run_id")
@@ -50,10 +48,62 @@ def parse_icr_args(raw: str) -> dict[str, Any]:
         args["run_id"] = rest[0]
         if len(rest) > 1:
             args["format"] = rest[1]
+        if len(rest) > 2:
+            args["output_path"] = rest[2]
     elif action == "list":
         if rest:
             args["limit"] = int(rest[0])
+        if len(rest) > 1:
+            args["status"] = rest[1]
+        if len(rest) > 2:
+            args["mode"] = rest[2]
     else:
         args["challenge"] = " ".join(rest)
     return args
 
+
+def _parse_run_args(tokens: list[str]) -> dict[str, Any]:
+    if not tokens:
+        raise ValueError("/icr run requires a mode and challenge text")
+    mode = tokens[0]
+    args: dict[str, Any] = {"mode": mode}
+    positionals: list[str] = []
+    index = 1
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--":
+            positionals.extend(tokens[index + 1 :])
+            break
+        if token in {"--config-json", "--config"}:
+            value, index = _next_value(tokens, index, token)
+            parsed = json.loads(value)
+            if not isinstance(parsed, dict):
+                raise ValueError(f"{token} must be a JSON object")
+            args["config"] = parsed
+        elif token == "--run-id":
+            args["run_id"], index = _next_value(tokens, index, token)
+        elif token == "--content":
+            args["content"], index = _next_value(tokens, index, token)
+        elif token == "--instruction":
+            args["instruction"], index = _next_value(tokens, index, token)
+        elif token == "--challenge":
+            args["challenge"], index = _next_value(tokens, index, token)
+        elif token.startswith("--"):
+            raise ValueError(f"Unknown /icr run option: {token}")
+        else:
+            positionals.append(token)
+        index += 1
+
+    text = " ".join(positionals).strip()
+    if mode == "agentic_refinement":
+        args.setdefault("content", text)
+    else:
+        args.setdefault("challenge", text)
+    return args
+
+
+def _next_value(tokens: list[str], index: int, option: str) -> tuple[str, int]:
+    next_index = index + 1
+    if next_index >= len(tokens):
+        raise ValueError(f"{option} requires a value")
+    return tokens[next_index], next_index

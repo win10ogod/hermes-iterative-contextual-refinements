@@ -9,6 +9,7 @@ import pytest
 
 from hermes_iterative_contextual_refinements.agentic import apply_operation
 from hermes_iterative_contextual_refinements.config import build_config
+from hermes_iterative_contextual_refinements.commands import parse_icr_args
 from hermes_iterative_contextual_refinements.llm import ICRLlm
 from hermes_iterative_contextual_refinements.plugin import register
 from hermes_iterative_contextual_refinements.persistence import RunStore
@@ -223,6 +224,9 @@ def test_plugin_registration_and_schemas(monkeypatch, tmp_path):
         "agentic_refinement",
         "dca",
     ]
+    config_schema = schema["parameters"]["properties"]["config"]
+    assert config_schema["properties"]["max_api_attempts"]["const"] == 4
+    assert config_schema["properties"]["python_execution_roles"]["oneOf"][0]["type"] == "string"
 
 
 def test_single_pass_deepthink_flow(tmp_path):
@@ -357,6 +361,7 @@ def test_status_export_and_list_handlers(monkeypatch, tmp_path):
 
     listed = json.loads(handlers["icr_list_runs"]({"limit": 5}))
     assert [row["run_id"] for row in listed["runs"]] == [run_id]
+    assert not list((tmp_path / ".hermes" / "icr" / "runs").glob("*.tmp"))
 
 
 def test_multi_edit_operations_are_sequential():
@@ -366,6 +371,39 @@ def test_multi_edit_operations_are_sequential():
     assert first["success"] is True
     assert second["success"] is True
     assert second["result"] == "alpha delta"
+
+
+def test_config_string_values_are_parsed_without_silent_truthiness():
+    cfg = build_config(
+        {
+            "refinement": "false",
+            "python_execution_enabled": "true",
+            "python_execution_roles": "solution_attempt,self_improvement",
+            "retry_delays_seconds": [0, 0, 0],
+            "contextual_retry_delays_seconds": [0, 0],
+        },
+        mode="deepthink",
+    )
+
+    assert cfg.refinement is False
+    assert cfg.python_execution_enabled is True
+    assert cfg.python_execution_roles == ("solution_attempt", "self_improvement")
+
+    with pytest.raises(ValueError, match="contextual_retry_delays_seconds"):
+        build_config({"contextual_retry_delays_seconds": [1]}, mode="contextual_refinement")
+
+
+def test_slash_run_parses_config_and_agentic_content():
+    args = parse_icr_args('run deepthink --config-json \'{"hypotheses": 1, "retry_delays_seconds": [0, 0, 0]}\' --run-id custom Solve this')
+    assert args["mode"] == "deepthink"
+    assert args["run_id"] == "custom"
+    assert args["challenge"] == "Solve this"
+    assert args["config"]["hypotheses"] == 1
+
+    agentic = parse_icr_args('run agentic_refinement --content "bad draft" --instruction "fix wording"')
+    assert agentic["mode"] == "agentic_refinement"
+    assert agentic["content"] == "bad draft"
+    assert agentic["instruction"] == "fix wording"
 
 
 def test_python_session_persists_state(tmp_path):

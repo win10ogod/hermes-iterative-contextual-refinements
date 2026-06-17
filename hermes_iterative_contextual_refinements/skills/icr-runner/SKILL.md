@@ -42,6 +42,13 @@ For `agentic_refinement`, use:
 }
 ```
 
+For slash-command use, prefer the tool for complex inputs, but `/icr` can pass config and agentic content:
+
+```text
+/icr run evolving_deepthink --config-json '{"main_strategies":3,"hypotheses":2,"evolving_depth":6}' Analyze this design...
+/icr run agentic_refinement --content "Current draft" --instruction "Improve correctness and structure."
+```
+
 ## Configuration Discipline
 
 Do not lower capability to make a run faster. The plugin validates ICR limits:

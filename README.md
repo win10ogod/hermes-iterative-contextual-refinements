@@ -101,9 +101,13 @@ For `agentic_refinement`, pass `content` and optional `instruction` instead of `
 
 ```text
 /icr list 10
+/icr list 20 completed deepthink
 /icr status icr-abc123
 /icr export icr-abc123 markdown
+/icr export icr-abc123 markdown /tmp/icr-abc123.md
 /icr run deepthink Analyze this design...
+/icr run evolving_deepthink --config-json '{"main_strategies":3,"hypotheses":2,"evolving_depth":6}' Analyze this design...
+/icr run agentic_refinement --content "Current draft" --instruction "Improve correctness and structure."
 ```
 
 Use `icr_run` for detailed config.

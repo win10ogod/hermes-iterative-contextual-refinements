@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -27,7 +28,28 @@ class RunStore:
 
     def save(self, record: dict[str, Any]) -> Path:
         path = self.path_for(record["run_id"])
-        path.write_text(dumps(record), encoding="utf-8")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_name = ""
+        try:
+            with tempfile.NamedTemporaryFile(
+                "w",
+                encoding="utf-8",
+                dir=path.parent,
+                prefix=f".{path.stem}.",
+                suffix=".tmp",
+                delete=False,
+            ) as handle:
+                tmp_name = handle.name
+                handle.write(dumps(record))
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(tmp_name, path)
+        finally:
+            if tmp_name:
+                try:
+                    Path(tmp_name).unlink(missing_ok=True)
+                except OSError:
+                    pass
         return path
 
     def load(self, run_id: str) -> dict[str, Any]:
@@ -114,4 +136,3 @@ def _markdown_final(final: Any) -> str:
     if final:
         return str(final)
     return "No final artifact recorded."
-

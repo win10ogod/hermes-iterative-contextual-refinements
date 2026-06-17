@@ -2,7 +2,16 @@
 
 from __future__ import annotations
 
-from .constants import ICR_MODES
+from .constants import (
+    DEEPTHINK_MAIN_STRATEGY_MAX,
+    DEEPTHINK_MAIN_STRATEGY_MIN,
+    EVOLVING_DFS_DEPTH_MAX,
+    EVOLVING_DFS_DEPTH_MIN,
+    HYPOTHESIS_MAX,
+    HYPOTHESIS_MIN,
+    ICR_MODES,
+    MAX_API_ATTEMPTS,
+)
 
 
 def icr_run_schema() -> dict:
@@ -30,9 +39,8 @@ def icr_run_schema() -> dict:
                     "description": "Optional agentic refinement instruction.",
                 },
                 "config": {
-                    "type": "object",
+                    **icr_config_schema(),
                     "description": "Mode configuration. Counts outside documented ICR limits are rejected.",
-                    "additionalProperties": True,
                 },
                 "run_id": {
                     "type": "string",
@@ -42,6 +50,65 @@ def icr_run_schema() -> dict:
             "required": ["mode"],
             "additionalProperties": False,
         },
+    }
+
+
+def icr_config_schema() -> dict:
+    return {
+        "type": "object",
+        "properties": {
+            "main_strategies": {"type": "integer", "minimum": DEEPTHINK_MAIN_STRATEGY_MIN, "maximum": DEEPTHINK_MAIN_STRATEGY_MAX},
+            "sub_strategies": {"type": "integer", "enum": [0, 2, 3, 4, 5]},
+            "hypotheses": {"type": "integer", "minimum": HYPOTHESIS_MIN, "maximum": HYPOTHESIS_MAX},
+            "hypothesis_injection_mode": {"type": "string", "enum": ["parallel", "strategy_aware", "selective_injection"]},
+            "refinement": {"type": "boolean"},
+            "critique_synthesis": {"type": "boolean"},
+            "include_hypotheses_in_synthesis": {"type": "boolean"},
+            "full_solution_context": {"type": "boolean"},
+            "evolving_depth": {"type": "integer", "minimum": EVOLVING_DFS_DEPTH_MIN, "maximum": EVOLVING_DFS_DEPTH_MAX},
+            "pqf": {"type": "boolean"},
+            "pqf_aggressiveness": {"type": "string", "enum": ["balanced", "aggressive"]},
+            "max_api_attempts": {"type": "integer", "const": MAX_API_ATTEMPTS},
+            "retry_delays_seconds": {
+                "type": "array",
+                "items": {"type": "number", "minimum": 0},
+                "minItems": 3,
+                "maxItems": 3,
+            },
+            "contextual_retry_delays_seconds": {
+                "type": "array",
+                "items": {"type": "number", "minimum": 0},
+                "minItems": 2,
+                "maxItems": 2,
+            },
+            "contextual_iterations": {"type": "integer", "minimum": 1},
+            "contextual_condensation_interval": {"type": "integer", "minimum": 1},
+            "adaptive_max_tool_turns": {"type": "integer", "minimum": 1},
+            "agentic_max_tool_turns": {"type": "integer", "minimum": 1},
+            "dca_pool_limit": {"type": "integer", "minimum": 1},
+            "python_execution_enabled": {"type": "boolean"},
+            "python_execution_timeout_seconds": {"type": "number", "exclusiveMinimum": 0},
+            "python_execution_roles": {
+                "oneOf": [
+                    {"type": "string", "description": "Single role or comma-separated roles."},
+                    {"type": "array", "items": {"type": "string"}, "minItems": 1},
+                ]
+            },
+            "role_overrides": {
+                "type": "object",
+                "additionalProperties": {
+                    "type": "object",
+                    "properties": {
+                        "provider": {"type": "string"},
+                        "model": {"type": "string"},
+                        "agent_id": {"type": "string"},
+                        "profile": {"type": "string"},
+                    },
+                    "additionalProperties": False,
+                },
+            },
+        },
+        "additionalProperties": True,
     }
 
 
