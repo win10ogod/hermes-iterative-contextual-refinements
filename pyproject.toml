@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hermes-iterative-contextual-refinements"
+version = "0.1.0"
+description = "Hermes Agent plugin for Iterative Contextual Refinements."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "local" }]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.entry-points."hermes_agent.plugins"]
+hermes-iterative-contextual-refinements = "hermes_iterative_contextual_refinements:register"
+
+[tool.setuptools]
+packages = ["hermes_iterative_contextual_refinements"]
+
+[tool.setuptools.package-data]
+hermes_iterative_contextual_refinements = ["skills/*/SKILL.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+

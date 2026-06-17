@@ -1,0 +1,33 @@
+"""Shared constants for the ICR Hermes plugin."""
+
+PLUGIN_NAME = "hermes-iterative-contextual-refinements"
+TOOLSET_NAME = "icr"
+
+MAX_API_ATTEMPTS = 4
+DEEPTHINK_RETRY_DELAYS_SECONDS = (20.0, 40.0, 80.0)
+CONTEXTUAL_RETRY_DELAYS_SECONDS = (2.0, 3.0)
+
+POOL_HISTORY_WINDOW = 5
+CORRECTION_HISTORY_WINDOW = 5
+MEMORY_INTERVAL = 5
+PQF_GROUP_SIZE = 2
+HYPOTHESIS_HEARTBEAT_INTERVAL = 2
+
+DEEPTHINK_MAIN_STRATEGY_MIN = 1
+DEEPTHINK_MAIN_STRATEGY_MAX = 10
+EVOLVING_DFS_MAIN_STRATEGY_MAX = 5
+HYPOTHESIS_MIN = 0
+HYPOTHESIS_MAX = 6
+EVOLVING_DFS_DEPTH_MIN = 1
+EVOLVING_DFS_DEPTH_MAX = 10
+SUB_STRATEGY_ALLOWED_COUNTS = {0, 2, 3, 4, 5}
+
+ICR_MODES = (
+    "deepthink",
+    "evolving_deepthink",
+    "adaptive_deepthink",
+    "contextual_refinement",
+    "agentic_refinement",
+    "dca",
+)
+
