@@ -23,6 +23,8 @@ python -m hermes_iterative_contextual_refinements.prompt_parity
 
 Same-stage ICR work is executed concurrently where the source design uses parallel agent calls: sub-strategy generation, hypothesis testing, branch execution, critique, correction, Evolving DFS solution pools, memory agents, PQF groups, Adaptive Deepthink batch tools, and DCA local pools.
 
+When `icr_run` is executed inside Hermes gateway, the plugin emits a lightweight activity heartbeat for the duration of the synchronous tool call. This prevents long but active ICR runs from being misclassified as inactive while preserving the same prompts, retry behavior, strategy counts, and state-machine artifacts. Set `HERMES_ICR_ACTIVITY_HEARTBEAT_SECONDS` to tune the heartbeat cadence; the default is `10` seconds.
+
 Python-assisted agent roles are available with explicit config. When enabled, selected roles may return fenced `python` blocks; the plugin executes them in a persistent role-local Python session, records stdout/stderr/errors, then asks the same role to produce the final answer from the execution evidence.
 
 The plugin saves complete run artifacts to:
@@ -194,6 +196,8 @@ ICR prompts can be large, especially with full upstream Deepthink prompts and hy
 ```
 
 `model_call_timeout_seconds` is passed from the first attempt. If it is omitted, the first attempt keeps the Hermes host default; if that attempt fails with a timeout, later retries pass `model_call_timeout_retry_seconds`. Supported timeout keyword names are `timeout_seconds`, `timeout`, `request_timeout`, and `read_timeout`; choose the one your Hermes LLM provider accepts.
+
+This is separate from Hermes gateway inactivity protection. The plugin heartbeat keeps the gateway activity clock fresh while a long `icr_run` is still working. If the gateway timeout is still reached, set `agent.gateway_timeout` above the expected full ICR runtime or use `0` to disable the gateway limit.
 
 ## Role Model Overrides
 

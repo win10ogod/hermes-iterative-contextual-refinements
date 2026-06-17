@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import hashlib
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -16,6 +17,7 @@ from hermes_iterative_contextual_refinements import dca as dca_module
 from hermes_iterative_contextual_refinements import prompts as prompt_module
 from hermes_iterative_contextual_refinements.config import build_config
 from hermes_iterative_contextual_refinements.commands import parse_icr_args
+from hermes_iterative_contextual_refinements import heartbeat as heartbeat_module
 from hermes_iterative_contextual_refinements.llm import ICRLlm
 from hermes_iterative_contextual_refinements.plugin import register
 from hermes_iterative_contextual_refinements.persistence import RunStore
@@ -519,6 +521,20 @@ def test_status_export_and_list_handlers(monkeypatch, tmp_path):
     listed = json.loads(handlers["icr_list_runs"]({"limit": 5}))
     assert [row["run_id"] for row in listed["runs"]] == [run_id]
     assert not list((tmp_path / ".hermes" / "icr" / "runs").glob("*.tmp"))
+
+
+def test_activity_heartbeat_pings_during_synchronous_work(monkeypatch):
+    events: list[str] = []
+    monkeypatch.setattr(heartbeat_module, "current_activity_callback", lambda: events.append)
+
+    with heartbeat_module.ActivityHeartbeat("ICR run unit", interval_seconds=0.01):
+        deadline = time.monotonic() + 0.2
+        while not any(": running" in event for event in events) and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+    assert any(": started" in event for event in events)
+    assert any(": running" in event for event in events)
+    assert any(": completed" in event for event in events)
 
 
 def test_multi_edit_operations_are_sequential():

@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from .heartbeat import ActivityHeartbeat
 from .json_utils import dumps
 from .persistence import RunStore
 from .runner import ICRRunner
@@ -14,7 +15,9 @@ def make_handlers(ctx: Any, store: RunStore | None = None) -> dict[str, Any]:
     run_store = store or RunStore()
 
     def icr_run(args: dict[str, Any], **_: Any) -> str:
-        record = ICRRunner(ctx.llm, run_store).run(args)
+        mode = str(args.get("mode") or "unknown")
+        with ActivityHeartbeat(f"ICR run {mode}"):
+            record = ICRRunner(ctx.llm, run_store).run(args)
         return dumps(
             {
                 "success": True,
@@ -76,4 +79,3 @@ def make_handlers(ctx: Any, store: RunStore | None = None) -> dict[str, Any]:
         "icr_export": icr_export,
         "icr_list_runs": icr_list_runs,
     }
-

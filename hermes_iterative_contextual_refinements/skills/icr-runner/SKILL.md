@@ -60,6 +60,7 @@ Do not lower capability to make a run faster. The plugin validates ICR limits:
 - Deepthink retry delays default to 20, 40, 80 seconds.
 - Main model timeout is configurable with `model_call_timeout_seconds`; omit it or set `0` to keep the Hermes host default.
 - If a host/provider timeout happens, retries use `model_call_timeout_retry_seconds` unless it is set to `0`.
+- Long synchronous `icr_run` calls emit a Hermes gateway activity heartbeat by default. This avoids gateway inactivity kills without reducing prompts, strategy counts, retries, or parallel stages.
 
 If a faster diagnostic run is needed, explicitly say it is a diagnostic run and keep its config visible in the run artifact.
 
@@ -78,6 +79,8 @@ For long ICR prompts, prefer explicit timeout configuration over reducing strate
 ```
 
 Use `model_call_timeout_kwarg` only to match the host provider interface. Supported values are `timeout_seconds`, `timeout`, `request_timeout`, and `read_timeout`.
+
+Gateway inactivity is a different layer from model request timeout. The plugin heartbeat keeps the gateway activity clock fresh during long active runs; `agent.gateway_timeout` still controls the maximum gateway patience policy.
 
 ## Python-Assisted Roles
 
