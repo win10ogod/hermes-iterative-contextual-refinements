@@ -11,6 +11,8 @@ Hermes plugin for running Iterative Contextual Refinements (ICR) from Hermes Age
 - `agentic_refinement`: internal tool loop preserving `read_current_content`, `multi_edit`, `verify_current_content`, `searchacademia`, `searchacademia_and`, and verified-only `Exit`.
 - `dca`: dynamic compute alternatives with pool generator and local pool evolution.
 
+Each run also emits `artifacts.state_machine`, an upstream-shaped React/LangGraph state snapshot. It includes a `VersionedState`-compatible export wrapper, legacy `ExportedConfig` fields, the active `ModeStateHandler` state, LangGraph node/edge/reducer metadata for Agentic and Adaptive Deepthink, pipeline transition logs, restore/sanitizer plans, and optimized indexes for roles, purposes, branches, hypotheses, tools, final candidates, messages, and content versions.
+
 Default role system prompts are loaded from copied upstream prompt resources in `hermes_iterative_contextual_refinements/source_prompts/`. The package records SHA-256 checksums for those resources and tests that engines use the extracted upstream prompts instead of shortened reimplementations.
 
 Prompt parity can be checked after installation with:
@@ -30,6 +32,8 @@ $HERMES_HOME/icr/runs/<run_id>.json
 ```
 
 Each run records raw prompts, raw responses, parsed structured data, statuses, errors, retry attempts, usage metadata, semantic mode adjustments, and final exports.
+
+State-machine artifacts are saved inside the same run JSON. They keep the original Hermes artifacts intact while projecting the run into upstream field names such as `activeDeepthinkPipeline`, `activeAgenticState`, `activeContextualState`, `activeAdaptiveDeepthinkState`, `DeepthinkPipelineState`, `AgenticState`, `ContextualState`, `AdaptiveDeepthinkStoreState`, and `DCAPipelineState`.
 
 ## Install
 
@@ -129,11 +133,26 @@ The plugin rejects invalid user configuration instead of silently reducing the r
 - Sub-strategies: `0`, `2`, `3`, `4`, or `5`; forced to `0` in Evolving DFS and recorded as a semantic adjustment
 - Hypotheses: `0-6`
 - Evolving DFS depth: `1-10`
+- DCA pool limit: `1-10`
 - Max model attempts: exactly `4`
 - Deepthink retry delays default to `20`, `40`, and `80` seconds
 - Evolving DFS forces selective hypothesis routing and PQF, recorded in the run config
+- Evolving DFS records the first hypothesis round at upstream `global_iteration: 0` and initial branch execution at global iteration `1`
 - Final judge receives candidate solution texts only, not internal search machinery
 - Python execution is off by default and must be enabled through `python_execution_enabled`; execution artifacts are recorded under `python_executions`
+
+## State Machine Parity
+
+Use the `icr-state-machine` skill or inspect `artifacts.state_machine` directly. Important fields:
+
+- `versioned_state`: upstream `StateVersion.ts`-style wrapper.
+- `exported_config`: legacy export fields for older import tooling.
+- `mode_state`: active handler state for the run's upstream mode.
+- `graph`: React pipeline or LangGraph node/edge/reducer description.
+- `transition_log`: ordered state creation, model calls, tool calls/results, events, and terminal state.
+- `indexes`: direct replay/audit lookups, an optimization beyond the browser runtime.
+
+Adaptive Deepthink now rejects premature `Exit` and continues orchestration until `SelectBestSolution` has populated `selected_solution`. Rejected Exit attempts remain visible in `adaptive_state.tool_events` and `state_machine.transition_log`.
 
 ## Python-Assisted Roles
 

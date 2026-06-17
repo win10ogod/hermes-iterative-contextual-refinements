@@ -25,8 +25,11 @@ class DCAEngine:
 
     def run(self, problem: str) -> dict[str, Any]:
         state: dict[str, Any] = {
+            "id": f"dca-{self.record.get('run_id', 'run')}",
             "problem": problem,
             "status": "processing",
+            "error": None,
+            "is_stop_requested": False,
             "solutions": [{"id": "root", "title": "Problem", "content": problem, "type": "root", "timestamp": utc_now_iso()}],
         }
         pool = self.llm.structured(

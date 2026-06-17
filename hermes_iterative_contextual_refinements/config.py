@@ -14,6 +14,7 @@ from .constants import (
     CONTEXTUAL_RETRY_DELAYS_SECONDS,
     DEEPTHINK_MAIN_STRATEGY_MAX,
     DEEPTHINK_MAIN_STRATEGY_MIN,
+    DCA_POOL_LIMIT_MAX,
     DEEPTHINK_RETRY_DELAYS_SECONDS,
     EVOLVING_DFS_DEPTH_MAX,
     EVOLVING_DFS_DEPTH_MIN,
@@ -250,6 +251,8 @@ def build_config(raw: dict[str, Any] | None, *, mode: str) -> ICRConfig:
         raise ValueError("agentic_max_tool_turns must be positive")
     if cfg.dca_pool_limit < 1:
         raise ValueError("dca_pool_limit must be positive")
+    if cfg.dca_pool_limit > DCA_POOL_LIMIT_MAX:
+        raise ValueError("dca_pool_limit must be between 1 and 10 to match upstream DCA")
     if cfg.python_execution_timeout_seconds <= 0:
         raise ValueError("python_execution_timeout_seconds must be positive")
     if not cfg.python_execution_roles:

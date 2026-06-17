@@ -8,7 +8,7 @@ from typing import Any
 from . import prompts
 from .concurrency import run_parallel
 from .config import ICRConfig
-from .constants import HYPOTHESIS_HEARTBEAT_INTERVAL, MEMORY_INTERVAL, POOL_HISTORY_WINDOW, PQF_GROUP_SIZE
+from .constants import HYPOTHESIS_HEARTBEAT_INTERVAL, MEMORY_INTERVAL, PQF_GROUP_SIZE
 from .json_utils import dumps, utc_now_iso
 from .llm import ICRLlm
 from .schemas import HYPOTHESES_SCHEMA, PQF_SCHEMA, SOLUTION_POOL_SCHEMA, STRATEGIES_SCHEMA, STRATEGY_UPDATE_SCHEMA, SUB_STRATEGIES_SCHEMA
@@ -114,11 +114,11 @@ class DeepthinkEngine:
 
     def run_evolving_dfs(self, challenge: str) -> dict[str, Any]:
         strategies = self._generate_main_strategies(challenge, self.config.main_strategies)
-        hypotheses, tests, packet, packets = self._hypothesis_round(challenge, strategies, round_number=1, global_iteration=1, selective=True)
+        hypotheses, tests, packet, packets = self._hypothesis_round(challenge, strategies, round_number=1, global_iteration=0, selective=True)
         hypothesis_rounds = [
             {
                 "round_number": 1,
-                "global_iteration": 1,
+                "global_iteration": 0,
                 "hypotheses": hypotheses,
                 "tests": tests,
                 "packet": packet,
@@ -491,7 +491,6 @@ class DeepthinkEngine:
                     "parsed_pool_response": entry["parsed_pool_response"],
                 }
             )
-        branch["pool_history"] = branch["pool_history"][-POOL_HISTORY_WINDOW:]
 
     def _run_pqf(self, challenge: str, due: list[dict[str, Any]], branches: list[dict[str, Any]]) -> list[dict[str, Any]]:
         groups = [due[i : i + PQF_GROUP_SIZE] for i in range(0, len(due), PQF_GROUP_SIZE)]

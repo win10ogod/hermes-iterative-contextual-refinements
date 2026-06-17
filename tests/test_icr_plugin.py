@@ -223,6 +223,7 @@ def test_plugin_registration_and_schemas(monkeypatch, tmp_path):
         "icr-agentic-refinement",
         "icr-results-review",
         "icr-prompt-parity",
+        "icr-state-machine",
     }
     schema = icr_run_schema()
     assert schema["parameters"]["properties"]["mode"]["enum"] == [
@@ -309,6 +310,12 @@ def test_single_pass_deepthink_flow(tmp_path):
     assert "<SOLUTION_4>" in final_input
     assert "Critique for" not in final_input
     assert all(call["status"] == "completed" for call in record["llm_calls"])
+    machine = record["artifacts"]["state_machine"]
+    assert machine["upstream_mode"] == "deepthink"
+    assert machine["mode_state"]["pipeline"]["finalJudgingStatus"] == "completed"
+    assert machine["versioned_state"]["data"]["currentMode"] == "deepthink"
+    assert set(machine["indexes"]["branchIds"]) == {"main1-sub1", "main1-sub2", "main2-sub1", "main2-sub2"}
+    assert machine["indexes"]["llmCallsByRole"]["final_judge"]
 
 
 def test_evolving_dfs_replacement_and_heartbeat(tmp_path):
@@ -331,9 +338,13 @@ def test_evolving_dfs_replacement_and_heartbeat(tmp_path):
     assert main1["last_hypothesis_flush_global_iteration"] == 5
     assert len(artifacts["replacement_archive"]) == 1
     assert artifacts["replacement_archive"][0]["previous_branch_version"] == 1
-    assert [round_["global_iteration"] for round_ in artifacts["hypothesis_rounds"]] == [1, 2, 4, 6]
+    assert [round_["global_iteration"] for round_ in artifacts["hypothesis_rounds"]] == [0, 2, 4, 6]
     assert artifacts["hypothesis_rounds"][-1]["updated_strategy_ids"] == ["main1"]
     assert "persistent strategic failure" in artifacts["replacement_archive"][0]["pqf_reasoning"]
+    machine = artifacts["state_machine"]
+    assert machine["mode_state"]["pipeline"]["deepthinkVariant"] == "evolving_dfs"
+    assert machine["mode_state"]["pipeline"]["hypothesisRounds"][0]["globalIteration"] == 0
+    assert machine["mode_state"]["pipeline"]["initialStrategies"][0]["replacementHistory"]
 
 
 def test_adaptive_deepthink_tool_flow(tmp_path):
@@ -356,6 +367,48 @@ def test_adaptive_deepthink_tool_flow(tmp_path):
         "SelectBestSolution",
         "Exit",
     ]
+    machine = record["artifacts"]["state_machine"]
+    assert machine["upstream_mode"] == "adaptive-deepthink"
+    assert machine["graph"]["nodes"] == ["agent", "tools"]
+    assert machine["graph"]["shouldExit"] is True
+    assert machine["mode_state"]["graphState"]["coreState"]["selectedSolution"].startswith("SELECTED")
+
+
+class PrematureAdaptiveExitLLM(FakeLLM):
+    def _parsed_for(self, purpose: str, prompt: str) -> dict:
+        if purpose == "adaptive_deepthink.orchestrator":
+            self.adaptive_turn += 1
+            plan = [
+                {"name": "Exit", "arguments": {}},
+                {"name": "GenerateStrategies", "arguments": {"numStrategies": 1}},
+                {"name": "GenerateHypotheses", "arguments": {"numHypotheses": 1}},
+                {"name": "TestHypotheses", "arguments": {"hypothesisIds": ["hypothesis-1"]}},
+                {"name": "ExecuteStrategies", "arguments": {"executions": [{"strategyId": "strategy-1", "hypothesisIds": ["hypothesis-1"]}]}},
+                {"name": "SolutionCritique", "arguments": {"executionIds": ["execution-strategy-1"]}},
+                {"name": "CorrectedSolutions", "arguments": {"executionIds": ["execution-strategy-1"]}},
+                {"name": "SelectBestSolution", "arguments": {"solutionIds": ["execution-strategy-1:Corrected"]}},
+                {"name": "Exit", "arguments": {}},
+            ]
+            return {"assistant_text": f"adaptive turn {self.adaptive_turn}", "tool_calls": [plan[self.adaptive_turn - 1]]}
+        return super()._parsed_for(purpose, prompt)
+
+
+def test_adaptive_rejected_exit_does_not_complete_run(tmp_path):
+    record = ICRRunner(PrematureAdaptiveExitLLM(), RunStore(tmp_path)).run(
+        {
+            "mode": "adaptive_deepthink",
+            "challenge": "Adaptive solve",
+            "config": {"hypotheses": 1, "retry_delays_seconds": [0, 0, 0], "adaptive_max_tool_turns": 12},
+        }
+    )
+    events = record["artifacts"]["adaptive_state"]["tool_events"]
+    assert events[0]["tool"] == "Exit"
+    assert events[0]["result"].startswith("[ERROR: Exit rejected")
+    assert events[-1]["tool"] == "Exit"
+    assert record["artifacts"]["adaptive_state"]["should_exit"] is True
+    machine = record["artifacts"]["state_machine"]
+    assert machine["transition_log"][-1]["node"] == "END"
+    assert machine["indexes"]["toolCallsByTool"]["Exit"] == [1, 9]
 
 
 def test_contextual_loop_and_condensation(tmp_path):
@@ -372,8 +425,13 @@ def test_contextual_loop_and_condensation(tmp_path):
     )
     state = record["artifacts"]["contextual_state"]
     assert state["iteration_count"] == 2
+    assert state["is_running"] is False
     assert len(state["memory_snapshots"]) == 1
     assert {"main_generator", "iterative_agent", "strategic_pool_agent", "memory_agent"} <= {m["role"] for m in state["messages"]}
+    machine = record["artifacts"]["state_machine"]
+    assert machine["upstream_mode"] == "contextual"
+    assert machine["mode_state"]["iterationCount"] == 2
+    assert machine["mode_state"]["isRunning"] is False
 
 
 def test_agentic_edit_verify_exit_loop(tmp_path):
@@ -391,6 +449,11 @@ def test_agentic_edit_verify_exit_loop(tmp_path):
     assert state["verification_count"] == 1
     assert state["last_verified_content"] == "good draft"
     assert [event["tool"] for event in state["tool_events"]] == ["read_current_content", "multi_edit", "verify_current_content", "Exit"]
+    machine = record["artifacts"]["state_machine"]
+    assert machine["upstream_mode"] == "agentic"
+    assert machine["graph"]["shouldExit"] is True
+    assert machine["mode_state"]["graphState"]["shouldExit"] is True
+    assert machine["mode_state"]["graphState"]["currentContent"] == "good draft"
 
 
 def test_status_export_and_list_handlers(monkeypatch, tmp_path):
@@ -412,6 +475,7 @@ def test_status_export_and_list_handlers(monkeypatch, tmp_path):
     status = json.loads(handlers["icr_status"]({"run_id": run_id}))
     assert status["status"] == "completed"
     assert status["llm_call_count"] == 3
+    assert "state_machine" in status["artifact_keys"]
 
     exported = json.loads(handlers["icr_export"]({"run_id": run_id, "format": "markdown"}))
     assert exported["format"] == "markdown"
@@ -449,6 +513,8 @@ def test_config_string_values_are_parsed_without_silent_truthiness():
 
     with pytest.raises(ValueError, match="contextual_retry_delays_seconds"):
         build_config({"contextual_retry_delays_seconds": [1]}, mode="contextual_refinement")
+    with pytest.raises(ValueError, match="dca_pool_limit"):
+        build_config({"dca_pool_limit": 11}, mode="dca")
 
 
 def test_slash_run_parses_config_and_agentic_content():

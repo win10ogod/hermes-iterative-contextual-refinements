@@ -21,6 +21,7 @@ HYPOTHESIS_MAX = 6
 EVOLVING_DFS_DEPTH_MIN = 1
 EVOLVING_DFS_DEPTH_MAX = 10
 SUB_STRATEGY_ALLOWED_COUNTS = {0, 2, 3, 4, 5}
+DCA_POOL_LIMIT_MAX = 10
 
 ICR_MODES = (
     "deepthink",
@@ -30,4 +31,3 @@ ICR_MODES = (
     "agentic_refinement",
     "dca",
 )
-

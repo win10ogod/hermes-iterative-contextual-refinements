@@ -14,6 +14,7 @@ from .deepthink import DeepthinkEngine
 from .llm import ICRLlm
 from .persistence import RunStore
 from .run_record import mark_completed, mark_error, new_run
+from .state_machine import attach_state_machine
 
 
 class ICRRunner:
@@ -55,8 +56,10 @@ class ICRRunner:
                 challenge = _require_text(args, "challenge")
                 DCAEngine(llm, record, cfg).run(challenge)
             mark_completed(record)
+            attach_state_machine(record)
         except BaseException as exc:
             mark_error(record, exc)
+            attach_state_machine(record)
             self.store.save(record)
             raise
         finally:

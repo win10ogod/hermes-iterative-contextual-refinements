@@ -25,6 +25,7 @@ class ContextualRefinementEngine:
 
     def run(self, request: str) -> dict[str, Any]:
         state: dict[str, Any] = {
+            "id": f"contextual-{self.record.get('run_id', 'run')}",
             "initial_user_request": request,
             "initial_main_generation": "",
             "current_best_generation": "",
@@ -41,6 +42,8 @@ class ContextualRefinementEngine:
             "iteration_count": 0,
             "messages": [],
             "content_history": [],
+            "is_processing": True,
+            "is_running": True,
             "status": "processing",
         }
         turns_since_condense = 0
@@ -57,7 +60,7 @@ class ContextualRefinementEngine:
                 state["initial_main_generation"] = main
             state["current_best_generation"] = main
             state["content_history"].append({"content": main, "title": f"Iteration {iteration} - Main Generation", "timestamp": utc_now_iso()})
-            state["messages"].append({"role": "main_generator", "content": main, "iteration_number": iteration, "timestamp": utc_now_iso()})
+            state["messages"].append({"id": f"main-{iteration}", "role": "main_generator", "content": main, "iteration_number": iteration, "timestamp": utc_now_iso(), "status": "success"})
             state["main_generator_history"].append({"role": "assistant", "content": main})
             state["iterative_agent_history"].append({"role": "assistant", "content": main})
 
@@ -70,7 +73,7 @@ class ContextualRefinementEngine:
             )
             state["current_best_suggestions"] = critique
             state["all_iterative_suggestions"].append(critique)
-            state["messages"].append({"role": "iterative_agent", "content": critique, "iteration_number": iteration, "timestamp": utc_now_iso()})
+            state["messages"].append({"id": f"iterative-{iteration}", "role": "iterative_agent", "content": critique, "iteration_number": iteration, "timestamp": utc_now_iso(), "status": "success"})
             state["iterative_agent_history"].append({"role": "assistant", "content": critique})
 
             strategic_observation = "\n".join(
@@ -93,11 +96,11 @@ class ContextualRefinementEngine:
                 system_prompt=STRATEGIC_POOL_PROMPT,
             )
             if pool.strip() == "<<<Exit>>>":
-                state["messages"].append({"role": "system", "content": "Strategic Pool Agent requested exit.", "iteration_number": iteration, "timestamp": utc_now_iso()})
+                state["messages"].append({"id": f"system-{iteration}", "role": "system", "content": "Strategic Pool Agent requested exit.", "iteration_number": iteration, "timestamp": utc_now_iso(), "status": "success"})
                 break
             state["current_strategic_pool"] = pool
             state["all_strategic_pools"].append(pool)
-            state["messages"].append({"role": "strategic_pool_agent", "content": pool, "iteration_number": iteration, "timestamp": utc_now_iso()})
+            state["messages"].append({"id": f"strategic-pool-{iteration}", "role": "strategic_pool_agent", "content": pool, "iteration_number": iteration, "timestamp": utc_now_iso(), "status": "success"})
             state["strategic_pool_agent_history"].append({"role": "assistant", "content": pool})
 
             combined = "\n\n".join([critique, "---", "## Strategic Pool", pool])
@@ -114,7 +117,7 @@ class ContextualRefinementEngine:
                 )
                 state["current_memory"] = memory
                 state["memory_snapshots"].append({"memory": memory, "final_generation": state["current_best_generation"], "condense_point": iteration})
-                state["messages"].append({"role": "memory_agent", "content": memory, "iteration_number": iteration, "timestamp": utc_now_iso()})
+                state["messages"].append({"id": f"memory-{iteration}", "role": "memory_agent", "content": memory, "iteration_number": iteration, "timestamp": utc_now_iso(), "status": "success"})
                 initial = {"role": "user", "content": f"Initial User Request:\n{request}"}
                 memory_msg = {"role": "user", "content": f"Memory Summary (What worked and what didn't):\n{memory}"}
                 latest = {"role": "assistant", "content": main}
@@ -126,6 +129,8 @@ class ContextualRefinementEngine:
             state["main_generator_history"].append({"role": "user", "content": "Now implement the next iteration of the solution based on the critique and the strategies you just generated above."})
 
         state["status"] = "completed"
+        state["is_processing"] = False
+        state["is_running"] = False
         self.record["artifacts"].update({"contextual_state": state, "final": {"content": state["current_best_generation"], "strategic_pool": state["current_strategic_pool"]}})
         return state
 

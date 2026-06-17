@@ -59,6 +59,7 @@ def _register_skills(ctx: Any) -> None:
         "icr-agentic-refinement": "Operate agentic refinement with read/edit/verify/search/exit tool semantics.",
         "icr-results-review": "Review ICR artifacts, final judge boundaries, and exported run evidence.",
         "icr-prompt-parity": "Verify ICR prompt parity against bundled upstream prompt resources.",
+        "icr-state-machine": "Inspect upstream-shaped React/LangGraph state machine artifacts and replay indexes.",
     }
     for name, description in skill_descriptions.items():
         ctx.register_skill(name, base / name / "SKILL.md", description)

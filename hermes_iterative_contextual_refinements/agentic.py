@@ -36,14 +36,17 @@ class AgenticRefinementEngine:
 
     def run(self, initial_content: str, instruction: str = "") -> dict[str, Any]:
         state: dict[str, Any] = {
+            "id": f"agentic-{self.record.get('run_id', 'run')}",
             "original_content": initial_content,
             "current_content": initial_content,
-            "messages": [{"role": "user", "content": "Started agentic refinement run.", "timestamp": utc_now_iso()}],
+            "messages": [{"id": "user-1", "role": "user", "content": "Started agentic refinement run.", "timestamp": utc_now_iso(), "status": "success"}],
             "content_history": [{"content": initial_content, "title": "Initial Content", "timestamp": utc_now_iso()}],
             "verifier_reports": [],
             "verification_count": 0,
             "last_verified_content": None,
+            "is_processing": True,
             "is_complete": False,
+            "should_exit": False,
             "tool_events": [],
         }
         for turn in range(1, self.config.agentic_max_tool_turns + 1):
@@ -57,7 +60,7 @@ class AgenticRefinementEngine:
             )
             assistant_text = str(decision.get("assistant_text") or "")
             if assistant_text:
-                state["messages"].append({"role": "agent", "content": assistant_text, "timestamp": utc_now_iso()})
+                state["messages"].append({"id": f"agent-{turn}", "role": "agent", "content": assistant_text, "timestamp": utc_now_iso(), "status": "success"})
             tool_calls = decision.get("tool_calls") or []
             if not tool_calls:
                 continue
@@ -66,9 +69,11 @@ class AgenticRefinementEngine:
                 args = raw_call.get("arguments") or {}
                 result = self.execute_tool(state, name, args)
                 state["tool_events"].append({"turn": turn, "tool": name, "arguments": args, "result": result})
-                state["messages"].append({"role": "system", "content": result["content"], "status": result["status"], "timestamp": utc_now_iso()})
+                state["messages"].append({"id": f"system-{turn}-{len(state['tool_events'])}", "role": "system", "content": result["content"], "status": result["status"], "timestamp": utc_now_iso()})
                 if name == "Exit" and result["status"] == "success":
                     state["is_complete"] = True
+                    state["is_processing"] = False
+                    state["should_exit"] = True
                     self.record["artifacts"].update({"agentic_state": state, "final": {"final_content": state["current_content"]}})
                     return state
         raise RuntimeError("Agentic refinement reached max tool turns before verified Exit")

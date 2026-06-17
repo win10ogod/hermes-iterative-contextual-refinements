@@ -62,6 +62,10 @@ class AdaptiveDeepthinkEngine:
         self.config = config
         self.helper = DeepthinkEngine(llm, record, config)
         self.state: dict[str, Any] = {
+            "id": f"adaptive-core-{self.record.get('run_id', 'run')}",
+            "question": "",
+            "status": "idle",
+            "error": None,
             "strategies": {},
             "hypotheses": {},
             "hypothesis_testings": {},
@@ -69,10 +73,13 @@ class AdaptiveDeepthinkEngine:
             "critiques": {},
             "corrected_solutions": {},
             "selected_solution": None,
+            "should_exit": False,
             "tool_events": [],
         }
 
     def run(self, challenge: str) -> dict[str, Any]:
+        self.state["question"] = challenge
+        self.state["status"] = "processing"
         for turn in range(1, self.config.adaptive_max_tool_turns + 1):
             decision = self.llm.structured(
                 role="adaptive_orchestrator",
@@ -91,6 +98,10 @@ class AdaptiveDeepthinkEngine:
                 result = self.execute_tool(challenge, name, args)
                 self.state["tool_events"].append({"turn": turn, "tool": name, "arguments": args, "result": result})
                 if name == "Exit":
+                    if str(result).startswith("[ERROR:"):
+                        continue
+                    self.state["status"] = "completed"
+                    self.state["should_exit"] = True
                     self.record["artifacts"].update({"adaptive_state": self.state, "final": {"selected_solution": self.state.get("selected_solution")}})
                     return self.state
         raise RuntimeError("Adaptive Deepthink reached max tool turns before Exit")
