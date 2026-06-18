@@ -93,6 +93,8 @@ hermes-iterative-contextual-refinements = "hermes_iterative_contextual_refinemen
 
 For `agentic_refinement`, pass `content` and optional `instruction` instead of `challenge`.
 
+`icr_run` intentionally returns a compact completion payload: `run_id`, `status`, artifact path, compact progress, active LLM calls, and an `export_hint`. It does not embed the full final artifact in the tool response, so completed runs do not stall while returning a very large result. Use `icr_export` to retrieve the full JSON or Markdown output.
+
 ### `icr_status`
 
 ```json
@@ -214,6 +216,8 @@ For diagnosing suspected stalls, use explicit progress controls instead of reduc
 ```
 
 `icr_status` returns the durable `progress` object and `active_llm_calls`, so a running artifact can show whether the plugin is preparing a model call, waiting on a specific role/purpose, attaching the state machine, or serializing the final tool response.
+
+The `progress` object returned by `icr_run` and `icr_status` is compact: current progress, event count, and recent events. The complete event log remains in the JSON export.
 
 ## Role Model Overrides
 

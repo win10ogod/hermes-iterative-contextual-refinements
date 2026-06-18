@@ -42,6 +42,8 @@ For `agentic_refinement`, use:
 }
 ```
 
+`icr_run` returns a compact completion payload. Do not expect the full final answer in that tool result; use `icr_export` for Markdown or JSON after the run completes. This keeps completed long runs from failing while returning oversized tool output.
+
 For slash-command use, prefer the tool for complex inputs, but `/icr` can pass config and agentic content:
 
 ```text
@@ -97,6 +99,8 @@ For suspected stalls, keep the full ICR configuration but add visible deadlines:
 ```
 
 Use `icr_status` while a run is active. It returns `progress` and `active_llm_calls`, including the current role, purpose, attempt count, and last attempt status.
+
+`progress` in `icr_run` and `icr_status` is compact: current state, total event count, and recent events. Use `icr_export` JSON for the complete progress event log.
 
 ## Python-Assisted Roles
 

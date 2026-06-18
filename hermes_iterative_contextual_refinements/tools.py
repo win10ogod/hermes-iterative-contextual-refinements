@@ -20,7 +20,7 @@ def make_handlers(ctx: Any, store: RunStore | None = None) -> dict[str, Any]:
         with ActivityHeartbeat(f"ICR run {mode}", stale_after_seconds=stale_after) as heartbeat:
             record = ICRRunner(ctx.llm, run_store).run(args, activity=heartbeat)
             heartbeat.mark_progress("handler:serializing_result")
-            _mark_handler_progress(record, run_store, "serializing_result", mode=mode)
+            _mark_handler_progress(record, "serializing_result", mode=mode)
         return dumps(
             {
                 "success": True,
@@ -28,9 +28,13 @@ def make_handlers(ctx: Any, store: RunStore | None = None) -> dict[str, Any]:
                 "mode": record["mode"],
                 "status": record["status"],
                 "path": str(run_store.path_for(record["run_id"])),
-                "final": record.get("artifacts", {}).get("final"),
+                "final_available": _has_final(record),
+                "artifact_keys": sorted((record.get("artifacts") or {}).keys()),
                 "usage": record.get("usage", {}),
-                "progress": record.get("progress", {}),
+                "progress": _compact_progress(record.get("progress", {})),
+                "active_llm_calls": _active_llm_calls(record),
+                "result_policy": "Full final output is omitted from icr_run to keep the tool response small. Use icr_export for JSON or Markdown results.",
+                "export_hint": {"tool": "icr_export", "args": {"run_id": record["run_id"], "format": "markdown"}},
                 "semantic_adjustments": record.get("config", {}).get("semantic_adjustments", []),
             }
         )
@@ -47,10 +51,12 @@ def make_handlers(ctx: Any, store: RunStore | None = None) -> dict[str, Any]:
                 "updated_at": run.get("updated_at"),
                 "errors": run.get("errors", []),
                 "usage": run.get("usage", {}),
-                "progress": run.get("progress", {}),
+                "progress": _compact_progress(run.get("progress", {})),
                 "active_llm_calls": _active_llm_calls(run),
                 "artifact_keys": sorted((run.get("artifacts") or {}).keys()),
                 "llm_call_count": len(run.get("llm_calls", [])),
+                "final_available": _has_final(run),
+                "export_hint": {"tool": "icr_export", "args": {"run_id": run.get("run_id"), "format": "markdown"}},
             }
         )
 
@@ -101,7 +107,7 @@ def _positive_config_value(args: dict[str, Any], key: str) -> float | None:
     return value if value > 0 else None
 
 
-def _mark_handler_progress(record: dict[str, Any], store: RunStore, status: str, **details: Any) -> None:
+def _mark_handler_progress(record: dict[str, Any], status: str, **details: Any) -> None:
     now = utc_now_iso()
     progress = record.setdefault("progress", {})
     event = {
@@ -115,7 +121,29 @@ def _mark_handler_progress(record: dict[str, Any], store: RunStore, status: str,
     progress["last_progress_at"] = now
     progress.setdefault("events", []).append(event)
     record["updated_at"] = now
-    store.save(record)
+
+
+def _compact_progress(progress: dict[str, Any], *, recent_event_limit: int = 5) -> dict[str, Any]:
+    events = progress.get("events") if isinstance(progress, dict) else []
+    if not isinstance(events, list):
+        events = []
+    return {
+        "current": progress.get("current") if isinstance(progress, dict) else None,
+        "started_at": progress.get("started_at") if isinstance(progress, dict) else None,
+        "last_progress_at": progress.get("last_progress_at") if isinstance(progress, dict) else None,
+        "elapsed_seconds": progress.get("elapsed_seconds") if isinstance(progress, dict) else None,
+        "deadline_seconds": progress.get("deadline_seconds") if isinstance(progress, dict) else None,
+        "heartbeat_stale_seconds": progress.get("heartbeat_stale_seconds") if isinstance(progress, dict) else None,
+        "event_count": len(events),
+        "recent_events": events[-recent_event_limit:],
+    }
+
+
+def _has_final(run: dict[str, Any]) -> bool:
+    artifacts = run.get("artifacts") or {}
+    if not isinstance(artifacts, dict):
+        return False
+    return any(key in artifacts and artifacts.get(key) not in (None, "", {}, []) for key in ("final", "selected_solution", "final_content"))
 
 
 def _active_llm_calls(run: dict[str, Any]) -> list[dict[str, Any]]:

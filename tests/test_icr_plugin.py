@@ -510,13 +510,21 @@ def test_status_export_and_list_handlers(monkeypatch, tmp_path):
     )
     assert run_response["success"] is True
     run_id = run_response["run_id"]
+    assert "final" not in run_response
+    assert run_response["final_available"] is True
+    assert run_response["progress"]["current"]["stage"] == "handler"
+    assert run_response["progress"]["event_count"] >= len(run_response["progress"]["recent_events"])
+    assert run_response["export_hint"]["args"]["run_id"] == run_id
 
     status = json.loads(handlers["icr_status"]({"run_id": run_id}))
     assert status["status"] == "completed"
     assert status["llm_call_count"] == 3
     assert "state_machine" in status["artifact_keys"]
-    assert status["progress"]["current"]["stage"] == "handler"
+    assert status["progress"]["current"]["stage"] == "runner"
+    assert status["progress"]["current"]["status"] == "completed"
+    assert status["progress"]["event_count"] >= len(status["progress"]["recent_events"])
     assert status["active_llm_calls"] == []
+    assert status["final_available"] is True
 
     exported = json.loads(handlers["icr_export"]({"run_id": run_id, "format": "markdown"}))
     assert exported["format"] == "markdown"
