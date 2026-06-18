@@ -12,6 +12,7 @@ from collections import defaultdict
 from datetime import datetime
 from typing import Any
 
+from .constants import PLUGIN_NAME, PLUGIN_VERSION
 from .json_utils import utc_now_iso
 from .source_prompts import SOURCE_PROMPT_SHA256
 
@@ -49,7 +50,7 @@ def build_state_machine(record: dict[str, Any]) -> dict[str, Any]:
         "_version": UPSTREAM_STATE_VERSION,
         "_exportedAt": record.get("updated_at") or utc_now_iso(),
         "_mode": upstream_mode,
-        "_appVersion": "hermes-iterative-contextual-refinements/0.1.0",
+        "_appVersion": f"{PLUGIN_NAME}/{PLUGIN_VERSION}",
         "data": {
             "currentMode": upstream_mode,
             "initialIdea": _initial_idea(record),

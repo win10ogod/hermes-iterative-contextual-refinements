@@ -16,6 +16,7 @@ from hermes_iterative_contextual_refinements import contextual as contextual_mod
 from hermes_iterative_contextual_refinements import dca as dca_module
 from hermes_iterative_contextual_refinements import prompts as prompt_module
 from hermes_iterative_contextual_refinements.config import build_config
+from hermes_iterative_contextual_refinements.constants import PLUGIN_NAME, PLUGIN_VERSION
 from hermes_iterative_contextual_refinements.commands import parse_icr_args
 from hermes_iterative_contextual_refinements import heartbeat as heartbeat_module
 from hermes_iterative_contextual_refinements.llm import ICRLlm
@@ -29,6 +30,7 @@ from hermes_iterative_contextual_refinements.runner import ICRRunner
 from hermes_iterative_contextual_refinements.schemas import icr_run_schema, icr_start_schema
 from hermes_iterative_contextual_refinements.source_prompts import SOURCE_PROMPT_SHA256, load_adaptive_prompts, load_deepthink_prompts
 from hermes_iterative_contextual_refinements.tools import make_handlers
+from hermes_iterative_contextual_refinements import __version__
 
 
 @dataclass
@@ -297,6 +299,26 @@ def test_plugin_registration_and_schemas(monkeypatch, tmp_path):
     start_schema = icr_start_schema()
     assert start_schema["name"] == "icr_start"
     assert start_schema["parameters"]["properties"]["mode"]["enum"] == schema["parameters"]["properties"]["mode"]["enum"]
+
+
+def test_version_metadata_is_consistent(tmp_path):
+    root = Path(__file__).resolve().parents[1]
+    pyproject = (root / "pyproject.toml").read_text(encoding="utf-8")
+    plugin_yaml = (root / "plugin.yaml").read_text(encoding="utf-8")
+
+    assert __version__ == PLUGIN_VERSION
+    assert f'version = "{PLUGIN_VERSION}"' in pyproject
+    assert f"version: {PLUGIN_VERSION}" in plugin_yaml
+    assert "  - icr_start" in plugin_yaml
+
+    record = ICRRunner(FakeLLM(), RunStore(tmp_path / "runs")).run(
+        {
+            "mode": "dca",
+            "challenge": "Version metadata",
+            "config": {"retry_delays_seconds": [0, 0, 0], "dca_pool_limit": 1},
+        }
+    )
+    assert record["artifacts"]["state_machine"]["versioned_state"]["_appVersion"] == f"{PLUGIN_NAME}/{PLUGIN_VERSION}"
 
 
 def test_source_prompt_resources_are_exact_copies():
