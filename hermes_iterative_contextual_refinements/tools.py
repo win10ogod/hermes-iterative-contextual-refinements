@@ -5,14 +5,16 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from .background import DEFAULT_BACKGROUND_MANAGER, BackgroundRunManager
 from .heartbeat import ActivityHeartbeat
 from .json_utils import dumps, utc_now_iso
 from .persistence import RunStore
 from .runner import ICRRunner
 
 
-def make_handlers(ctx: Any, store: RunStore | None = None) -> dict[str, Any]:
+def make_handlers(ctx: Any, store: RunStore | None = None, background_manager: BackgroundRunManager | None = None) -> dict[str, Any]:
     run_store = store or RunStore()
+    bg_manager = background_manager or DEFAULT_BACKGROUND_MANAGER
 
     def icr_run(args: dict[str, Any], **_: Any) -> str:
         mode = str(args.get("mode") or "unknown")
@@ -32,6 +34,9 @@ def make_handlers(ctx: Any, store: RunStore | None = None) -> dict[str, Any]:
                 "artifact_keys": sorted((record.get("artifacts") or {}).keys()),
                 "usage": record.get("usage", {}),
                 "progress": _compact_progress(record.get("progress", {})),
+                "checkpoint_count": len(record.get("checkpoints", [])),
+                "last_checkpoint": _last_checkpoint(record),
+                "resume_metadata": record.get("resume_metadata", {}),
                 "active_llm_calls": _active_llm_calls(record),
                 "result_policy": "Full final output is omitted from icr_run to keep the tool response small. Use icr_export for JSON or Markdown results.",
                 "export_hint": {"tool": "icr_export", "args": {"run_id": record["run_id"], "format": "markdown"}},
@@ -39,19 +44,48 @@ def make_handlers(ctx: Any, store: RunStore | None = None) -> dict[str, Any]:
             }
         )
 
+    def icr_start(args: dict[str, Any], **_: Any) -> str:
+        record = bg_manager.start(ctx_llm=ctx.llm, store=run_store, args=args)
+        run_id = record["run_id"]
+        return dumps(
+            {
+                "success": True,
+                "run_id": run_id,
+                "mode": record.get("mode"),
+                "status": record.get("status"),
+                "path": str(run_store.path_for(run_id)),
+                "background": {**(record.get("background") or {}), **bg_manager.state_for(run_id)},
+                "progress": _compact_progress(record.get("progress", {})),
+                "checkpoint_count": len(record.get("checkpoints", [])),
+                "last_checkpoint": _last_checkpoint(record),
+                "result_policy": "icr_start returns immediately and the run continues in this Hermes process. Poll icr_status and export completed results with icr_export.",
+                "status_hint": {"tool": "icr_status", "args": {"run_id": run_id}},
+                "export_hint": {"tool": "icr_export", "args": {"run_id": run_id, "format": "markdown"}},
+            }
+        )
+
     def icr_status(args: dict[str, Any], **_: Any) -> str:
         run = run_store.load(str(args["run_id"]))
+        background = run.get("background") or {}
+        if isinstance(background, dict):
+            background = {**background, **bg_manager.state_for(str(args["run_id"]))}
+        else:
+            background = bg_manager.state_for(str(args["run_id"]))
         return dumps(
             {
                 "success": True,
                 "run_id": run.get("run_id"),
                 "mode": run.get("mode"),
-                "status": run.get("status"),
+                "status": _effective_status(run),
                 "created_at": run.get("created_at"),
                 "updated_at": run.get("updated_at"),
                 "errors": run.get("errors", []),
                 "usage": run.get("usage", {}),
                 "progress": _compact_progress(run.get("progress", {})),
+                "checkpoint_count": len(run.get("checkpoints", [])),
+                "last_checkpoint": _last_checkpoint(run),
+                "resume_metadata": run.get("resume_metadata", {}),
+                "background": background,
                 "active_llm_calls": _active_llm_calls(run),
                 "artifact_keys": sorted((run.get("artifacts") or {}).keys()),
                 "llm_call_count": len(run.get("llm_calls", [])),
@@ -87,6 +121,7 @@ def make_handlers(ctx: Any, store: RunStore | None = None) -> dict[str, Any]:
 
     return {
         "icr_run": icr_run,
+        "icr_start": icr_start,
         "icr_status": icr_status,
         "icr_export": icr_export,
         "icr_list_runs": icr_list_runs,
@@ -134,6 +169,8 @@ def _compact_progress(progress: dict[str, Any], *, recent_event_limit: int = 5) 
         "elapsed_seconds": progress.get("elapsed_seconds") if isinstance(progress, dict) else None,
         "deadline_seconds": progress.get("deadline_seconds") if isinstance(progress, dict) else None,
         "heartbeat_stale_seconds": progress.get("heartbeat_stale_seconds") if isinstance(progress, dict) else None,
+        "checkpoint_count": progress.get("checkpoint_count") if isinstance(progress, dict) else None,
+        "last_checkpoint": progress.get("last_checkpoint") if isinstance(progress, dict) else None,
         "event_count": len(events),
         "recent_events": events[-recent_event_limit:],
     }
@@ -144,6 +181,19 @@ def _has_final(run: dict[str, Any]) -> bool:
     if not isinstance(artifacts, dict):
         return False
     return any(key in artifacts and artifacts.get(key) not in (None, "", {}, []) for key in ("final", "selected_solution", "final_content"))
+
+
+def _effective_status(run: dict[str, Any]) -> str | None:
+    status = run.get("status")
+    if status != "completed":
+        return status
+    progress = run.get("progress") if isinstance(run.get("progress"), dict) else {}
+    current = progress.get("current") if isinstance(progress, dict) else {}
+    if not isinstance(current, dict):
+        return "processing"
+    if current.get("stage") == "runner" and current.get("status") == "completed":
+        return "completed"
+    return "processing"
 
 
 def _active_llm_calls(run: dict[str, Any]) -> list[dict[str, Any]]:
@@ -166,3 +216,10 @@ def _active_llm_calls(run: dict[str, Any]) -> list[dict[str, Any]]:
             }
         )
     return active
+
+
+def _last_checkpoint(run: dict[str, Any]) -> dict[str, Any] | None:
+    checkpoints = run.get("checkpoints")
+    if isinstance(checkpoints, list) and checkpoints and isinstance(checkpoints[-1], dict):
+        return checkpoints[-1]
+    return None

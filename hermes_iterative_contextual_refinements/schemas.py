@@ -53,6 +53,16 @@ def icr_run_schema() -> dict:
     }
 
 
+def icr_start_schema() -> dict:
+    schema = icr_run_schema()
+    schema["name"] = "icr_start"
+    schema["description"] = (
+        "Start an Iterative Contextual Refinements run in the Hermes plugin process and return immediately. "
+        "Use icr_status to poll progress and icr_export to retrieve completed results."
+    )
+    return schema
+
+
 def icr_config_schema() -> dict:
     return {
         "type": "object",

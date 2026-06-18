@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -26,8 +27,72 @@ class RunStore:
             raise ValueError("Invalid run_id")
         return self.base / f"{safe}.json"
 
+    def blob_dir_for(self, run_id: str) -> Path:
+        return self.base.parent / "blobs" / self.path_for(run_id).stem
+
     def save(self, record: dict[str, Any]) -> Path:
+        record = self._prepare_for_save(record)
         path = self.path_for(record["run_id"])
+        self._atomic_write_json(path, record)
+        return path
+
+    def load(self, run_id: str) -> dict[str, Any]:
+        path = self.path_for(run_id)
+        if not path.exists():
+            raise FileNotFoundError(f"ICR run not found: {run_id}")
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            raise ValueError(f"Invalid run file: {path}")
+        return self._resolve_blobs(data)
+
+    def _prepare_for_save(self, record: dict[str, Any]) -> dict[str, Any]:
+        snapshot = deepcopy(record)
+        run_id = snapshot["run_id"]
+        artifacts = snapshot.get("artifacts")
+        blob_refs = dict(snapshot.get("blob_refs") or {})
+        storage = dict(snapshot.get("storage") or {})
+
+        if isinstance(artifacts, dict):
+            snapshot["artifact_keys"] = sorted(artifacts.keys())
+            if artifacts:
+                blob_path = self.blob_dir_for(run_id) / "artifacts.json"
+                self._atomic_write_json(blob_path, artifacts)
+                blob_refs["artifacts"] = blob_path.relative_to(self.base.parent).as_posix()
+                snapshot["artifacts"] = {}
+                snapshot["final_summary"] = _short_summary({"artifacts": artifacts})
+                storage["artifacts"] = "blob"
+            else:
+                snapshot.setdefault("final_summary", "")
+                storage.setdefault("artifacts", "inline")
+        else:
+            snapshot["artifact_keys"] = []
+            snapshot["artifacts"] = {}
+            snapshot.setdefault("final_summary", "")
+            storage.setdefault("artifacts", "inline")
+
+        snapshot["blob_refs"] = blob_refs
+        storage["index_version"] = "icr.hermes.storage.v1"
+        snapshot["storage"] = storage
+        return snapshot
+
+    def _resolve_blobs(self, data: dict[str, Any]) -> dict[str, Any]:
+        refs = data.get("blob_refs") or {}
+        if not isinstance(refs, dict):
+            return data
+        artifact_ref = refs.get("artifacts")
+        artifacts = data.get("artifacts")
+        if artifact_ref and (not isinstance(artifacts, dict) or not artifacts):
+            blob_path = self.base.parent / str(artifact_ref)
+            if not blob_path.exists():
+                raise FileNotFoundError(f"ICR artifact blob missing for {data.get('run_id')}: {blob_path}")
+            blob = json.loads(blob_path.read_text(encoding="utf-8"))
+            if not isinstance(blob, dict):
+                raise ValueError(f"Invalid ICR artifact blob: {blob_path}")
+            data["artifacts"] = blob
+            data["artifact_keys"] = sorted(blob.keys())
+        return data
+
+    def _atomic_write_json(self, path: Path, data: dict[str, Any]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp_name = ""
         try:
@@ -40,7 +105,7 @@ class RunStore:
                 delete=False,
             ) as handle:
                 tmp_name = handle.name
-                handle.write(dumps(record))
+                handle.write(dumps(data))
                 handle.flush()
                 os.fsync(handle.fileno())
             os.replace(tmp_name, path)
@@ -50,16 +115,6 @@ class RunStore:
                     Path(tmp_name).unlink(missing_ok=True)
                 except OSError:
                     pass
-        return path
-
-    def load(self, run_id: str) -> dict[str, Any]:
-        path = self.path_for(run_id)
-        if not path.exists():
-            raise FileNotFoundError(f"ICR run not found: {run_id}")
-        data = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(data, dict):
-            raise ValueError(f"Invalid run file: {path}")
-        return data
 
     def list_runs(self, *, limit: int = 20, status: str | None = None, mode: str | None = None) -> list[dict[str, Any]]:
         rows = []
@@ -80,7 +135,9 @@ class RunStore:
                     "created_at": data.get("created_at"),
                     "updated_at": data.get("updated_at"),
                     "path": str(path),
-                    "final_summary": _short_summary(data),
+                    "artifact_keys": data.get("artifact_keys", []),
+                    "checkpoint_count": len(data.get("checkpoints", [])),
+                    "final_summary": data.get("final_summary") or _short_summary(data),
                 }
             )
             if len(rows) >= limit:

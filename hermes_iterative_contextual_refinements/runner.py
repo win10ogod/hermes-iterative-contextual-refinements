@@ -11,6 +11,7 @@ from .constants import ICR_MODES
 from .contextual import ContextualRefinementEngine
 from .dca import DCAEngine
 from .deepthink import DeepthinkEngine
+from .json_utils import utc_now_iso
 from .llm import ICRLlm
 from .persistence import RunStore
 from .progress import RunProgress
@@ -34,7 +35,18 @@ class ICRRunner:
             "content": args.get("content") or "",
             "instruction": args.get("instruction") or "",
         }
-        record = new_run(mode, request, cfg.as_dict(), run_id=args.get("run_id"))
+        initial_record = args.get("_initial_record")
+        if isinstance(initial_record, dict):
+            record = initial_record
+            record["status"] = "processing"
+            record["updated_at"] = utc_now_iso()
+            record["request"] = request
+            record["config"] = cfg.as_dict()
+        else:
+            record = new_run(mode, request, cfg.as_dict(), run_id=args.get("run_id"))
+        background = args.get("_background")
+        if isinstance(background, dict):
+            record["background"] = dict(background)
         self.store.save(record)
         progress = RunProgress(record, self.store, cfg, activity=activity)
         if activity is not None and cfg.heartbeat_stale_seconds is not None:
@@ -66,9 +78,11 @@ class ICRRunner:
             progress.touch("state_machine", "attaching", mode=mode)
             attach_state_machine(record)
             progress.touch("state_machine", "attached", mode=mode)
+            _mark_background(record, "completed")
             progress.touch("runner", "completed", mode=mode)
         except BaseException as exc:
             mark_error(record, exc)
+            _mark_background(record, "error", error_type=type(exc).__name__, error=str(exc))
             progress.touch("state_machine", "attaching_after_error", mode=mode, error_type=type(exc).__name__)
             attach_state_machine(record)
             progress.touch("runner", "error", str(exc), error_type=type(exc).__name__, mode=mode)
@@ -84,3 +98,10 @@ def _require_text(args: dict[str, Any], key: str) -> str:
     if not value:
         raise ValueError(f"{key} is required for this ICR mode")
     return value
+
+
+def _mark_background(record: dict[str, Any], status: str, **details: Any) -> None:
+    background = record.get("background")
+    if not isinstance(background, dict):
+        return
+    background.update({"status": status, "completed_at": utc_now_iso(), **details})

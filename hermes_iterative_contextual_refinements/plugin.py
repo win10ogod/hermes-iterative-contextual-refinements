@@ -7,7 +7,7 @@ from typing import Any
 
 from .commands import make_icr_command
 from .constants import TOOLSET_NAME
-from .schemas import icr_export_schema, icr_list_runs_schema, icr_run_schema, icr_status_schema
+from .schemas import icr_export_schema, icr_list_runs_schema, icr_run_schema, icr_start_schema, icr_status_schema
 from .tools import make_handlers
 
 
@@ -19,6 +19,13 @@ def register(ctx: Any) -> None:
         schema=icr_run_schema(),
         handler=handlers["icr_run"],
         description="Run ICR modes through Hermes-owned LLM access.",
+    )
+    ctx.register_tool(
+        name="icr_start",
+        toolset=TOOLSET_NAME,
+        schema=icr_start_schema(),
+        handler=handlers["icr_start"],
+        description="Start ICR in the background and poll progress with icr_status.",
     )
     ctx.register_tool(
         name="icr_status",
@@ -45,7 +52,7 @@ def register(ctx: Any) -> None:
         name="icr",
         handler=make_icr_command(ctx),
         description="Run and inspect Iterative Contextual Refinements.",
-        args_hint="run <mode> <challenge> | status <run_id> | export <run_id> [json|markdown] | list [limit]",
+        args_hint="run <mode> <challenge> | start <mode> <challenge> | status <run_id> | export <run_id> [json|markdown] | list [limit]",
     )
     _register_skills(ctx)
 

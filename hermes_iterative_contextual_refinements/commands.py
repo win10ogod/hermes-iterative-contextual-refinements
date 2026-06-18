@@ -18,6 +18,8 @@ def make_icr_command(ctx: Any):
         action = args.pop("action", "run")
         if action == "run":
             return handlers["icr_run"](args)
+        if action == "start":
+            return handlers["icr_start"](args)
         if action == "status":
             return handlers["icr_status"](args)
         if action == "export":
@@ -36,7 +38,7 @@ def parse_icr_args(raw: str) -> dict[str, Any]:
     action = tokens[0].lower()
     args: dict[str, Any] = {"action": action}
     rest = tokens[1:]
-    if action == "run":
+    if action in {"run", "start"}:
         args.update(_parse_run_args(rest))
     elif action == "status":
         if not rest:
@@ -64,7 +66,7 @@ def parse_icr_args(raw: str) -> dict[str, Any]:
 
 def _parse_run_args(tokens: list[str]) -> dict[str, Any]:
     if not tokens:
-        raise ValueError("/icr run requires a mode and challenge text")
+        raise ValueError("/icr run/start requires a mode and challenge text")
     mode = tokens[0]
     args: dict[str, Any] = {"mode": mode}
     positionals: list[str] = []

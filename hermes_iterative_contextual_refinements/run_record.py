@@ -20,6 +20,16 @@ def new_run(mode: str, request: dict[str, Any], config: dict[str, Any], run_id: 
         "request": request,
         "config": config,
         "artifacts": {},
+        "artifact_keys": [],
+        "blob_refs": {},
+        "checkpoints": [],
+        "resume_metadata": {
+            "kind": "diagnostic_checkpoint",
+            "node_level_resume_supported": False,
+            "restart_input_available": True,
+            "checkpoint_count": 0,
+            "latest_checkpoint_id": None,
+        },
         "llm_calls": [],
         "events": [],
         "errors": [],
@@ -59,4 +69,3 @@ def mark_error(record: dict[str, Any], exc: BaseException) -> None:
 def mark_completed(record: dict[str, Any]) -> None:
     record["status"] = "completed"
     record["updated_at"] = utc_now_iso()
-

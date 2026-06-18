@@ -31,11 +31,14 @@ The plugin saves complete run artifacts to:
 
 ```text
 $HERMES_HOME/icr/runs/<run_id>.json
+$HERMES_HOME/icr/blobs/<run_id>/artifacts.json
 ```
 
-Each run records raw prompts, raw responses, parsed structured data, statuses, errors, retry attempts, usage metadata, semantic mode adjustments, durable progress events, active LLM-call state, and final exports.
+Each run records raw prompts, raw responses, parsed structured data, statuses, errors, retry attempts, usage metadata, semantic mode adjustments, durable progress events, checkpoints, active LLM-call state, and final exports.
 
-State-machine artifacts are saved inside the same run JSON. They keep the original Hermes artifacts intact while projecting the run into upstream field names such as `activeDeepthinkPipeline`, `activeAgenticState`, `activeContextualState`, `activeAdaptiveDeepthinkState`, `DeepthinkPipelineState`, `AgenticState`, `ContextualState`, `AdaptiveDeepthinkStoreState`, and `DCAPipelineState`.
+Completed run indexes keep large artifacts in the blob file above. `icr_status`, `icr_export`, and the Python `RunStore.load()` API resolve those blobs automatically, so callers still see full artifacts while routine polling stays small.
+
+State-machine artifacts are saved in the resolved artifacts blob. They keep the original Hermes artifacts intact while projecting the run into upstream field names such as `activeDeepthinkPipeline`, `activeAgenticState`, `activeContextualState`, `activeAdaptiveDeepthinkState`, `DeepthinkPipelineState`, `AgenticState`, `ContextualState`, `AdaptiveDeepthinkStoreState`, and `DCAPipelineState`.
 
 ## Install
 
@@ -95,6 +98,24 @@ For `agentic_refinement`, pass `content` and optional `instruction` instead of `
 
 `icr_run` intentionally returns a compact completion payload: `run_id`, `status`, artifact path, compact progress, active LLM calls, and an `export_hint`. It does not embed the full final artifact in the tool response, so completed runs do not stall while returning a very large result. Use `icr_export` to retrieve the full JSON or Markdown output.
 
+### `icr_start`
+
+```json
+{
+  "mode": "dca",
+  "challenge": "Generate alternatives for ...",
+  "config": {
+      "model_call_timeout_seconds": 900,
+      "run_deadline_seconds": 7200,
+      "heartbeat_stale_seconds": 1800
+  }
+}
+```
+
+`icr_start` starts the same ICR runner in a process-local background thread and returns immediately with `run_id`, `path`, compact progress, and polling/export hints. Use it when a synchronous tool response might hit a gateway response timeout even though the model calls are still progressing. Poll with `icr_status` and retrieve the final result with `icr_export`.
+
+Background execution is process-local: if the Hermes plugin process exits, the in-memory worker thread exits too. The saved run file still contains request/config/progress/checkpoint metadata for diagnosis and restart planning.
+
 ### `icr_status`
 
 ```json
@@ -124,6 +145,7 @@ For `agentic_refinement`, pass `content` and optional `instruction` instead of `
 /icr export icr-abc123 markdown
 /icr export icr-abc123 markdown /tmp/icr-abc123.md
 /icr run deepthink Analyze this design...
+/icr start deepthink Analyze this design...
 /icr run evolving_deepthink --config-json '{"main_strategies":3,"hypotheses":2,"evolving_depth":6}' Analyze this design...
 /icr run agentic_refinement --content "Current draft" --instruction "Improve correctness and structure."
 ```
@@ -215,9 +237,11 @@ For diagnosing suspected stalls, use explicit progress controls instead of reduc
 }
 ```
 
-`icr_status` returns the durable `progress` object and `active_llm_calls`, so a running artifact can show whether the plugin is preparing a model call, waiting on a specific role/purpose, attaching the state machine, or serializing the final tool response.
+`icr_status` returns the durable `progress` object, `active_llm_calls`, background metadata, and the latest checkpoint, so a running artifact can show whether the plugin is preparing a model call, waiting on a specific role/purpose, attaching the state machine, serializing the final tool response, or continuing in a process-local background worker.
 
-The `progress` object returned by `icr_run` and `icr_status` is compact: current progress, event count, and recent events. The complete event log remains in the JSON export.
+The `progress` object returned by `icr_run`, `icr_start`, and `icr_status` is compact: current progress, event count, recent events, checkpoint count, and latest checkpoint. The complete event and checkpoint logs remain in the JSON export.
+
+Checkpoints are diagnostic metadata captured at observable runner and LLM boundaries. They identify the latest durable stage, LLM call count, and artifact keys. They do not claim arbitrary LangGraph node-level resume yet; `resume_metadata.node_level_resume_supported` is intentionally `false` until exact node replay is implemented and tested.
 
 ## Role Model Overrides
 

@@ -32,6 +32,9 @@ with `icr_status`. Confirm:
 - `usage`
 - `artifact_keys`
 - `llm_call_count`
+- `checkpoint_count`
+- `last_checkpoint`
+- `background` when the run was started with `icr_start`
 
 ## Export
 
@@ -56,8 +59,11 @@ When claiming a run completed, verify the saved JSON contains:
 - parsed structured data for structured calls
 - usage metadata when the provider returned it
 - `artifacts.final`
+- `checkpoint_count` and `resume_metadata`
 - no unhandled errors
 - `python_executions` when Python-assisted roles were enabled, including stdout, stderr, error, role, and code
+
+Completed run indexes may store large artifacts in `$HERMES_HOME/icr/blobs/<run_id>/artifacts.json`. Use `icr_export` or `RunStore.load()` for resolved artifacts instead of reading only the raw run index.
 
 For Deepthink/Evolving DFS, additionally verify:
 

@@ -26,7 +26,7 @@ from hermes_iterative_contextual_refinements.prompt_parity import validate_promp
 from hermes_iterative_contextual_refinements.python_runtime import PythonSession, extract_python_blocks
 from hermes_iterative_contextual_refinements.run_record import new_run
 from hermes_iterative_contextual_refinements.runner import ICRRunner
-from hermes_iterative_contextual_refinements.schemas import icr_run_schema
+from hermes_iterative_contextual_refinements.schemas import icr_run_schema, icr_start_schema
 from hermes_iterative_contextual_refinements.source_prompts import SOURCE_PROMPT_SHA256, load_adaptive_prompts, load_deepthink_prompts
 from hermes_iterative_contextual_refinements.tools import make_handlers
 
@@ -247,12 +247,30 @@ class TimeoutThenSuccessLLM:
         return TextResult("ok")
 
 
+class SlowFakeLLM(FakeLLM):
+    def complete(self, messages, **kwargs):
+        time.sleep(0.03)
+        return super().complete(messages, **kwargs)
+
+    def complete_structured(self, *, instructions, input, json_schema=None, json_mode=False, schema_name=None, system_prompt=None, **kwargs):
+        time.sleep(0.03)
+        return super().complete_structured(
+            instructions=instructions,
+            input=input,
+            json_schema=json_schema,
+            json_mode=json_mode,
+            schema_name=schema_name,
+            system_prompt=system_prompt,
+            **kwargs,
+        )
+
+
 def test_plugin_registration_and_schemas(monkeypatch, tmp_path):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes"))
     ctx = FakeCtx()
     register(ctx)
 
-    assert set(ctx.tools) == {"icr_run", "icr_status", "icr_export", "icr_list_runs"}
+    assert set(ctx.tools) == {"icr_run", "icr_start", "icr_status", "icr_export", "icr_list_runs"}
     assert "icr" in ctx.commands
     assert set(ctx.skills) == {
         "icr-runner",
@@ -276,6 +294,9 @@ def test_plugin_registration_and_schemas(monkeypatch, tmp_path):
     assert config_schema["properties"]["max_api_attempts"]["const"] == 4
     assert config_schema["properties"]["python_execution_roles"]["oneOf"][0]["type"] == "string"
     assert config_schema["properties"]["model_call_timeout_kwarg"]["enum"] == ["timeout_seconds", "timeout", "request_timeout", "read_timeout"]
+    start_schema = icr_start_schema()
+    assert start_schema["name"] == "icr_start"
+    assert start_schema["parameters"]["properties"]["mode"]["enum"] == schema["parameters"]["properties"]["mode"]["enum"]
 
 
 def test_source_prompt_resources_are_exact_copies():
@@ -515,6 +536,8 @@ def test_status_export_and_list_handlers(monkeypatch, tmp_path):
     assert run_response["progress"]["current"]["stage"] == "handler"
     assert run_response["progress"]["event_count"] >= len(run_response["progress"]["recent_events"])
     assert run_response["export_hint"]["args"]["run_id"] == run_id
+    assert run_response["checkpoint_count"] > 0
+    assert run_response["last_checkpoint"]["stage"] == "runner"
 
     status = json.loads(handlers["icr_status"]({"run_id": run_id}))
     assert status["status"] == "completed"
@@ -525,6 +548,8 @@ def test_status_export_and_list_handlers(monkeypatch, tmp_path):
     assert status["progress"]["event_count"] >= len(status["progress"]["recent_events"])
     assert status["active_llm_calls"] == []
     assert status["final_available"] is True
+    assert status["checkpoint_count"] > 0
+    assert status["resume_metadata"]["node_level_resume_supported"] is False
 
     exported = json.loads(handlers["icr_export"]({"run_id": run_id, "format": "markdown"}))
     assert exported["format"] == "markdown"
@@ -532,7 +557,53 @@ def test_status_export_and_list_handlers(monkeypatch, tmp_path):
 
     listed = json.loads(handlers["icr_list_runs"]({"limit": 5}))
     assert [row["run_id"] for row in listed["runs"]] == [run_id]
+    assert listed["runs"][0]["artifact_keys"]
+    raw_run = json.loads(Path(run_response["path"]).read_text(encoding="utf-8"))
+    assert raw_run["artifacts"] == {}
+    assert raw_run["artifact_keys"]
+    artifact_ref = raw_run["blob_refs"]["artifacts"]
+    assert (tmp_path / ".hermes" / "icr" / artifact_ref).exists()
+    loaded = RunStore().load(run_id)
+    assert "final" in loaded["artifacts"]
     assert not list((tmp_path / ".hermes" / "icr" / "runs").glob("*.tmp"))
+
+
+def test_icr_start_runs_in_background_and_can_be_polled(monkeypatch, tmp_path):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes"))
+    ctx = FakeCtx(SlowFakeLLM())
+    handlers = make_handlers(ctx)
+    started_at = time.monotonic()
+    started = json.loads(
+        handlers["icr_start"](
+            {
+                "mode": "dca",
+                "challenge": "Generate alternatives",
+                "config": {"retry_delays_seconds": [0, 0, 0], "dca_pool_limit": 2},
+            }
+        )
+    )
+
+    assert started["success"] is True
+    assert time.monotonic() - started_at < 0.1
+    run_id = started["run_id"]
+    assert started["status"] in {"queued", "processing", "completed"}
+    assert started["background"]["process_local"] is True
+    assert started["status_hint"]["args"]["run_id"] == run_id
+
+    deadline = time.monotonic() + 3
+    status = {}
+    while time.monotonic() < deadline:
+        status = json.loads(handlers["icr_status"]({"run_id": run_id}))
+        if status["status"] == "completed":
+            break
+        time.sleep(0.02)
+
+    assert status["status"] == "completed"
+    assert status["final_available"] is True
+    assert status["checkpoint_count"] > 0
+    assert status["background"]["status"] == "completed"
+    exported = json.loads(handlers["icr_export"]({"run_id": run_id, "format": "markdown"}))
+    assert f"# ICR Run {run_id}" in exported["content"]
 
 
 def test_activity_heartbeat_pings_during_synchronous_work(monkeypatch):

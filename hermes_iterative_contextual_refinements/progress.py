@@ -55,6 +55,9 @@ class RunProgress:
             progress["deadline_seconds"] = self.config.run_deadline_seconds
             progress["heartbeat_stale_seconds"] = self.config.heartbeat_stale_seconds
             progress.setdefault("events", []).append(event)
+            checkpoint = self._append_checkpoint_locked(event)
+            progress["checkpoint_count"] = len(self.record.get("checkpoints", []))
+            progress["last_checkpoint"] = checkpoint
             self.record["updated_at"] = now
             self._save_observable_snapshot_locked()
         if self.activity is not None:
@@ -115,6 +118,13 @@ class RunProgress:
             "usage",
             "llm_calls",
             "progress",
+            "checkpoints",
+            "resume_metadata",
+            "background",
+            "artifact_keys",
+            "blob_refs",
+            "storage",
+            "final_summary",
         ):
             if key in self.record:
                 snapshot[key] = _safe_deepcopy(self.record[key])
@@ -123,6 +133,33 @@ class RunProgress:
         else:
             snapshot["artifacts"] = {}
         self.store.save(snapshot)
+
+    def _append_checkpoint_locked(self, event: dict[str, Any]) -> dict[str, Any]:
+        checkpoints = self.record.setdefault("checkpoints", [])
+        artifacts = self.record.get("artifacts") or {}
+        artifact_keys = sorted(artifacts.keys()) if isinstance(artifacts, dict) else []
+        checkpoint = {
+            "id": f"checkpoint-{len(checkpoints) + 1:06d}",
+            "timestamp": event.get("timestamp"),
+            "elapsed_seconds": event.get("elapsed_seconds"),
+            "stage": event.get("stage"),
+            "status": event.get("status"),
+            "message": event.get("message"),
+            "llm_call_count": len(self.record.get("llm_calls", [])),
+            "artifact_keys": artifact_keys,
+        }
+        checkpoints.append(checkpoint)
+        self.record["artifact_keys"] = artifact_keys
+        self.record["resume_metadata"] = {
+            "kind": "diagnostic_checkpoint",
+            "node_level_resume_supported": False,
+            "restart_input_available": True,
+            "checkpoint_count": len(checkpoints),
+            "latest_checkpoint_id": checkpoint["id"],
+            "latest_stage": checkpoint["stage"],
+            "latest_status": checkpoint["status"],
+        }
+        return checkpoint
 
 
 def _safe_deepcopy(value: Any) -> Any:

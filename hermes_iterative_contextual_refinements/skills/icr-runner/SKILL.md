@@ -18,7 +18,9 @@ Use this skill when a user wants to run an Iterative Contextual Refinements mode
 
 ## Run
 
-Call `icr_run` with:
+Call `icr_run` for a synchronous run, or `icr_start` when the run may exceed gateway response patience and should be polled in the background.
+
+Synchronous example:
 
 ```json
 {
@@ -28,6 +30,20 @@ Call `icr_run` with:
     "main_strategies": 3,
     "hypotheses": 2,
     "refinement": true
+  }
+}
+```
+
+Background example:
+
+```json
+{
+  "mode": "deepthink",
+  "challenge": "Core task",
+  "config": {
+    "model_call_timeout_seconds": 900,
+    "run_deadline_seconds": 7200,
+    "heartbeat_stale_seconds": 1800
   }
 }
 ```
@@ -44,10 +60,13 @@ For `agentic_refinement`, use:
 
 `icr_run` returns a compact completion payload. Do not expect the full final answer in that tool result; use `icr_export` for Markdown or JSON after the run completes. This keeps completed long runs from failing while returning oversized tool output.
 
+`icr_start` returns immediately with a `run_id`, compact progress, process-local background metadata, and polling/export hints. Poll with `icr_status` until `status` is `completed` or `error`, then export with `icr_export`. Background execution is process-local: if the Hermes plugin process exits, the worker exits too, but saved progress and checkpoint metadata remain available for diagnosis and restart planning.
+
 For slash-command use, prefer the tool for complex inputs, but `/icr` can pass config and agentic content:
 
 ```text
 /icr run evolving_deepthink --config-json '{"main_strategies":3,"hypotheses":2,"evolving_depth":6}' Analyze this design...
+/icr start evolving_deepthink --config-json '{"main_strategies":3,"hypotheses":2,"evolving_depth":6}' Analyze this design...
 /icr run agentic_refinement --content "Current draft" --instruction "Improve correctness and structure."
 ```
 
@@ -98,9 +117,11 @@ For suspected stalls, keep the full ICR configuration but add visible deadlines:
 }
 ```
 
-Use `icr_status` while a run is active. It returns `progress` and `active_llm_calls`, including the current role, purpose, attempt count, and last attempt status.
+Use `icr_status` while a run is active. It returns `progress`, `active_llm_calls`, background metadata, `checkpoint_count`, and `last_checkpoint`, including the current role, purpose, attempt count, and last attempt status.
 
-`progress` in `icr_run` and `icr_status` is compact: current state, total event count, and recent events. Use `icr_export` JSON for the complete progress event log.
+`progress` in `icr_run`, `icr_start`, and `icr_status` is compact: current state, total event count, recent events, checkpoint count, and latest checkpoint. Use `icr_export` JSON for the complete progress and checkpoint logs.
+
+Checkpoints are diagnostic metadata at runner and LLM boundaries. Do not claim arbitrary LangGraph node-level resume unless `resume_metadata.node_level_resume_supported` becomes true in a future tested implementation.
 
 ## Python-Assisted Roles
 
@@ -131,4 +152,4 @@ Use:
 - `icr_export` with `format: "markdown"` for a compact summary.
 - `icr_list_runs` to find recent runs.
 
-Artifacts are saved under `$HERMES_HOME/icr/runs/<run_id>.json`.
+Run indexes are saved under `$HERMES_HOME/icr/runs/<run_id>.json`; completed large artifacts are stored under `$HERMES_HOME/icr/blobs/<run_id>/artifacts.json` and are resolved automatically by `icr_status`, `icr_export`, and `RunStore.load()`.
