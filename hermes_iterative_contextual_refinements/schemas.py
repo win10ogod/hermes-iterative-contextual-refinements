@@ -103,6 +103,16 @@ def icr_config_schema() -> dict:
                 "enum": ["timeout_seconds", "timeout", "request_timeout", "read_timeout"],
                 "description": "Keyword used when passing the timeout to ctx.llm.",
             },
+            "run_deadline_seconds": {
+                "type": "number",
+                "minimum": 0,
+                "description": "Optional whole-run deadline. 0 or omitted disables the deadline.",
+            },
+            "heartbeat_stale_seconds": {
+                "type": "number",
+                "minimum": 0,
+                "description": "Optional stale-progress limit. When exceeded, the heartbeat stops refreshing gateway activity so a real stall is not hidden.",
+            },
             "python_execution_roles": {
                 "oneOf": [
                     {"type": "string", "description": "Single role or comma-separated roles."},

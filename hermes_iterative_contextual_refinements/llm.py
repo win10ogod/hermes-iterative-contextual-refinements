@@ -10,6 +10,7 @@ from typing import Any
 
 from .config import ICRConfig
 from .json_utils import as_text, parse_json_object, utc_now_iso
+from .progress import RunProgress
 from .python_runtime import PythonExecutionManager, extract_python_blocks, format_python_results
 
 
@@ -17,10 +18,11 @@ _TIMEOUT_KWARG_ALIASES = ("timeout_seconds", "timeout", "request_timeout", "read
 
 
 class ICRLlm:
-    def __init__(self, ctx_llm: Any, record: dict[str, Any], config: ICRConfig):
+    def __init__(self, ctx_llm: Any, record: dict[str, Any], config: ICRConfig, progress: RunProgress | None = None):
         self.ctx_llm = ctx_llm
         self.record = record
         self.config = config
+        self.progress = progress
         self._lock = threading.RLock()
         self._python = PythonExecutionManager(record, config.python_execution_timeout_seconds)
 
@@ -102,8 +104,35 @@ class ICRLlm:
 
     def _record_call(self, call: dict[str, Any]) -> None:
         with self._lock:
-            self.record.setdefault("llm_calls", []).append(call)
+            if self.progress is not None:
+                self.progress.upsert_llm_call(call)
+                return
+            calls = self.record.setdefault("llm_calls", [])
+            for index, existing in enumerate(calls):
+                if existing.get("id") == call.get("id"):
+                    calls[index] = call
+                    break
+            else:
+                calls.append(call)
             self.record["updated_at"] = utc_now_iso()
+
+    def _progress(self, status: str, call: dict[str, Any], **details: Any) -> None:
+        if self.progress is None:
+            return
+        self.progress.touch(
+            "llm_call",
+            status,
+            str(call.get("purpose") or ""),
+            call_id=call.get("id"),
+            role=call.get("role"),
+            purpose=call.get("purpose"),
+            kind=call.get("kind"),
+            **details,
+        )
+
+    def _check_deadline(self, stage: str) -> None:
+        if self.progress is not None:
+            self.progress.check_deadline(stage)
 
     def complete(self, *, role: str, purpose: str, prompt: str, system_prompt: str = "", temperature: float | None = None) -> str:
         call = {
@@ -123,9 +152,15 @@ class ICRLlm:
             messages.append({"role": "system", "content": effective_system_prompt})
         messages.append({"role": "user", "content": prompt})
         last_error: BaseException | None = None
+        self._record_call(call)
+        self._progress("started", call)
         for attempt in range(1, self.config.max_api_attempts + 1):
+            self._check_deadline(f"llm.{purpose}.attempt.{attempt}")
             timeout_seconds = self._timeout_for_attempt(last_error)
-            attempt_data: dict[str, Any] = {"attempt": attempt, "timeout_seconds": timeout_seconds}
+            attempt_data: dict[str, Any] = {"attempt": attempt, "timeout_seconds": timeout_seconds, "status": "processing"}
+            call["attempts"].append(attempt_data)
+            self._record_call(call)
+            self._progress("attempt_started", call, attempt=attempt, timeout_seconds=timeout_seconds)
             try:
                 result, timeout_kwarg = self._invoke_ctx(
                     self.ctx_llm.complete,
@@ -165,16 +200,18 @@ class ICRLlm:
                     }
                 )
                 attempt_data["status"] = "completed"
-                call["attempts"].append(attempt_data)
                 self._record_call(call)
+                self._progress("completed", call, attempt=attempt)
                 return final_text
             except BaseException as exc:
                 last_error = exc
                 attempt_data.update({"status": "error", "error": str(exc), "error_type": type(exc).__name__, "is_timeout": _is_timeout_error(exc)})
-                call["attempts"].append(attempt_data)
+                self._record_call(call)
+                self._progress("attempt_error", call, attempt=attempt, error_type=type(exc).__name__, is_timeout=_is_timeout_error(exc))
                 if attempt < self.config.max_api_attempts:
                     delay = self.config.retry_delays_seconds[attempt - 1]
                     if delay > 0:
+                        self._progress("retry_sleep", call, attempt=attempt, delay_seconds=delay)
                         time.sleep(delay)
         call.update(
             {
@@ -185,6 +222,7 @@ class ICRLlm:
             }
         )
         self._record_call(call)
+        self._progress("failed", call, error=str(last_error) if last_error else "Unknown LLM error")
         raise RuntimeError(f"{purpose} failed after {self.config.max_api_attempts} attempts: {last_error}")
 
     def _python_enabled_for(self, role: str) -> bool:
@@ -214,7 +252,11 @@ class ICRLlm:
         blocks = extract_python_blocks(first_text)
         if not blocks:
             return first_text, {}
+        if self.progress is not None:
+            self.progress.touch("python_execution", "started", purpose, role=role, purpose=purpose, block_count=len(blocks))
         results = self._python.execute_blocks(role=role, blocks=blocks)
+        if self.progress is not None:
+            self.progress.touch("python_execution", "completed", purpose, role=role, purpose=purpose, block_count=len(blocks))
         followup_messages = list(messages)
         followup_messages.append({"role": "assistant", "content": first_text})
         followup_messages.append(
@@ -235,6 +277,8 @@ class ICRLlm:
             purpose=f"{purpose}.python_finalization",
             **self._override_kwargs(role),
         )
+        if self.progress is not None:
+            self.progress.touch("python_finalization", "completed", purpose, role=role, purpose=purpose)
         usage = self._usage_dict(result)
         self._accumulate_usage(usage)
         return (
@@ -275,9 +319,15 @@ class ICRLlm:
             "attempts": [],
         }
         last_error: BaseException | None = None
+        self._record_call(call)
+        self._progress("started", call)
         for attempt in range(1, self.config.max_api_attempts + 1):
+            self._check_deadline(f"llm.{purpose}.attempt.{attempt}")
             timeout_seconds = self._timeout_for_attempt(last_error)
-            attempt_data: dict[str, Any] = {"attempt": attempt, "timeout_seconds": timeout_seconds}
+            attempt_data: dict[str, Any] = {"attempt": attempt, "timeout_seconds": timeout_seconds, "status": "processing"}
+            call["attempts"].append(attempt_data)
+            self._record_call(call)
+            self._progress("attempt_started", call, attempt=attempt, timeout_seconds=timeout_seconds)
             try:
                 result, timeout_kwarg = self._invoke_ctx(
                     self.ctx_llm.complete_structured,
@@ -316,16 +366,18 @@ class ICRLlm:
                     }
                 )
                 attempt_data["status"] = "completed"
-                call["attempts"].append(attempt_data)
                 self._record_call(call)
+                self._progress("completed", call, attempt=attempt)
                 return parsed
             except BaseException as exc:
                 last_error = exc
                 attempt_data.update({"status": "error", "error": str(exc), "error_type": type(exc).__name__, "is_timeout": _is_timeout_error(exc)})
-                call["attempts"].append(attempt_data)
+                self._record_call(call)
+                self._progress("attempt_error", call, attempt=attempt, error_type=type(exc).__name__, is_timeout=_is_timeout_error(exc))
                 if attempt < self.config.max_api_attempts:
                     delay = self.config.retry_delays_seconds[attempt - 1]
                     if delay > 0:
+                        self._progress("retry_sleep", call, attempt=attempt, delay_seconds=delay)
                         time.sleep(delay)
         call.update(
             {
@@ -336,6 +388,7 @@ class ICRLlm:
             }
         )
         self._record_call(call)
+        self._progress("failed", call, error=str(last_error) if last_error else "Unknown LLM error")
         raise RuntimeError(f"{purpose} failed after {self.config.max_api_attempts} attempts: {last_error}")
 
 

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from .heartbeat import ActivityHeartbeat
-from .json_utils import dumps
+from .json_utils import dumps, utc_now_iso
 from .persistence import RunStore
 from .runner import ICRRunner
 
@@ -16,8 +16,11 @@ def make_handlers(ctx: Any, store: RunStore | None = None) -> dict[str, Any]:
 
     def icr_run(args: dict[str, Any], **_: Any) -> str:
         mode = str(args.get("mode") or "unknown")
-        with ActivityHeartbeat(f"ICR run {mode}"):
-            record = ICRRunner(ctx.llm, run_store).run(args)
+        stale_after = _positive_config_value(args, "heartbeat_stale_seconds")
+        with ActivityHeartbeat(f"ICR run {mode}", stale_after_seconds=stale_after) as heartbeat:
+            record = ICRRunner(ctx.llm, run_store).run(args, activity=heartbeat)
+            heartbeat.mark_progress("handler:serializing_result")
+            _mark_handler_progress(record, run_store, "serializing_result", mode=mode)
         return dumps(
             {
                 "success": True,
@@ -27,6 +30,7 @@ def make_handlers(ctx: Any, store: RunStore | None = None) -> dict[str, Any]:
                 "path": str(run_store.path_for(record["run_id"])),
                 "final": record.get("artifacts", {}).get("final"),
                 "usage": record.get("usage", {}),
+                "progress": record.get("progress", {}),
                 "semantic_adjustments": record.get("config", {}).get("semantic_adjustments", []),
             }
         )
@@ -43,6 +47,8 @@ def make_handlers(ctx: Any, store: RunStore | None = None) -> dict[str, Any]:
                 "updated_at": run.get("updated_at"),
                 "errors": run.get("errors", []),
                 "usage": run.get("usage", {}),
+                "progress": run.get("progress", {}),
+                "active_llm_calls": _active_llm_calls(run),
                 "artifact_keys": sorted((run.get("artifacts") or {}).keys()),
                 "llm_call_count": len(run.get("llm_calls", [])),
             }
@@ -79,3 +85,56 @@ def make_handlers(ctx: Any, store: RunStore | None = None) -> dict[str, Any]:
         "icr_export": icr_export,
         "icr_list_runs": icr_list_runs,
     }
+
+
+def _positive_config_value(args: dict[str, Any], key: str) -> float | None:
+    config = args.get("config") or {}
+    if not isinstance(config, dict):
+        return None
+    raw = config.get(key)
+    if raw is None or raw == "":
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
+def _mark_handler_progress(record: dict[str, Any], store: RunStore, status: str, **details: Any) -> None:
+    now = utc_now_iso()
+    progress = record.setdefault("progress", {})
+    event = {
+        "timestamp": now,
+        "stage": "handler",
+        "status": status,
+        "message": "icr_run handler is preparing the tool response",
+        "details": details,
+    }
+    progress["current"] = event
+    progress["last_progress_at"] = now
+    progress.setdefault("events", []).append(event)
+    record["updated_at"] = now
+    store.save(record)
+
+
+def _active_llm_calls(run: dict[str, Any]) -> list[dict[str, Any]]:
+    active = []
+    for call in run.get("llm_calls", []):
+        if not isinstance(call, dict) or call.get("status") != "processing":
+            continue
+        attempts = call.get("attempts") or []
+        last_attempt = attempts[-1] if attempts and isinstance(attempts[-1], dict) else {}
+        active.append(
+            {
+                "id": call.get("id"),
+                "role": call.get("role"),
+                "purpose": call.get("purpose"),
+                "kind": call.get("kind"),
+                "status": call.get("status"),
+                "created_at": call.get("created_at"),
+                "attempt_count": len(attempts),
+                "last_attempt": last_attempt,
+            }
+        )
+    return active

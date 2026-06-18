@@ -21,8 +21,10 @@ from hermes_iterative_contextual_refinements import heartbeat as heartbeat_modul
 from hermes_iterative_contextual_refinements.llm import ICRLlm
 from hermes_iterative_contextual_refinements.plugin import register
 from hermes_iterative_contextual_refinements.persistence import RunStore
+from hermes_iterative_contextual_refinements.progress import RunProgress
 from hermes_iterative_contextual_refinements.prompt_parity import validate_prompt_parity
 from hermes_iterative_contextual_refinements.python_runtime import PythonSession, extract_python_blocks
+from hermes_iterative_contextual_refinements.run_record import new_run
 from hermes_iterative_contextual_refinements.runner import ICRRunner
 from hermes_iterative_contextual_refinements.schemas import icr_run_schema
 from hermes_iterative_contextual_refinements.source_prompts import SOURCE_PROMPT_SHA256, load_adaptive_prompts, load_deepthink_prompts
@@ -513,6 +515,8 @@ def test_status_export_and_list_handlers(monkeypatch, tmp_path):
     assert status["status"] == "completed"
     assert status["llm_call_count"] == 3
     assert "state_machine" in status["artifact_keys"]
+    assert status["progress"]["current"]["stage"] == "handler"
+    assert status["active_llm_calls"] == []
 
     exported = json.loads(handlers["icr_export"]({"run_id": run_id, "format": "markdown"}))
     assert exported["format"] == "markdown"
@@ -535,6 +539,52 @@ def test_activity_heartbeat_pings_during_synchronous_work(monkeypatch):
     assert any(": started" in event for event in events)
     assert any(": running" in event for event in events)
     assert any(": completed" in event for event in events)
+
+
+def test_activity_heartbeat_can_stop_on_stale_progress():
+    events: list[str] = []
+
+    with heartbeat_module.ActivityHeartbeat(
+        "ICR run stale-unit",
+        callback=events.append,
+        interval_seconds=0.01,
+        stale_after_seconds=0.02,
+    ):
+        deadline = time.monotonic() + 0.3
+        while not any("stale; heartbeat stopped" in event for event in events) and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+    assert any("stale; heartbeat stopped" in event for event in events)
+
+
+def test_llm_call_progress_is_persisted_before_provider_returns(tmp_path):
+    store = RunStore(tmp_path / "runs")
+    cfg = build_config({"retry_delays_seconds": [0, 0, 0]}, mode="deepthink")
+    record = new_run("deepthink", {"challenge": "observe progress"}, cfg.as_dict(), run_id="progress-run")
+    store.save(record)
+    snapshots = []
+
+    class InspectingLLM:
+        def complete(self, messages, **kwargs):
+            snapshots.append(store.load("progress-run"))
+            return TextResult("ok")
+
+    progress = RunProgress(record, store, cfg)
+    llm = ICRLlm(InspectingLLM(), record, cfg, progress=progress)
+    try:
+        assert llm.complete(role="solution_attempt", purpose="unit.progress", prompt="hello") == "ok"
+    finally:
+        llm.close()
+
+    before_return = snapshots[0]
+    active_call = before_return["llm_calls"][0]
+    assert active_call["status"] == "processing"
+    assert active_call["attempts"][0]["status"] == "processing"
+    assert before_return["progress"]["current"]["status"] == "attempt_started"
+
+    completed = store.load("progress-run")
+    assert completed["llm_calls"][0]["status"] == "completed"
+    assert completed["progress"]["current"]["status"] == "completed"
 
 
 def test_multi_edit_operations_are_sequential():
@@ -566,12 +616,16 @@ def test_config_string_values_are_parsed_without_silent_truthiness():
             "model_call_timeout_seconds": "900",
             "model_call_timeout_retry_seconds": "1800",
             "model_call_timeout_kwarg": "request_timeout",
+            "run_deadline_seconds": "3600",
+            "heartbeat_stale_seconds": "900",
         },
         mode="deepthink",
     )
     assert timeout_cfg.model_call_timeout_seconds == 900
     assert timeout_cfg.model_call_timeout_retry_seconds == 1800
     assert timeout_cfg.model_call_timeout_kwarg == "request_timeout"
+    assert timeout_cfg.run_deadline_seconds == 3600
+    assert timeout_cfg.heartbeat_stale_seconds == 900
 
     with pytest.raises(ValueError, match="contextual_retry_delays_seconds"):
         build_config({"contextual_retry_delays_seconds": [1]}, mode="contextual_refinement")
@@ -579,6 +633,8 @@ def test_config_string_values_are_parsed_without_silent_truthiness():
         build_config({"dca_pool_limit": 11}, mode="dca")
     with pytest.raises(ValueError, match="model_call_timeout_kwarg"):
         build_config({"model_call_timeout_kwarg": "bad_timeout"}, mode="deepthink")
+    with pytest.raises(ValueError, match="run_deadline_seconds"):
+        build_config({"run_deadline_seconds": -1}, mode="deepthink")
 
 
 def test_model_call_timeout_is_passed_to_text_and_structured_calls():

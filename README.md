@@ -23,7 +23,7 @@ python -m hermes_iterative_contextual_refinements.prompt_parity
 
 Same-stage ICR work is executed concurrently where the source design uses parallel agent calls: sub-strategy generation, hypothesis testing, branch execution, critique, correction, Evolving DFS solution pools, memory agents, PQF groups, Adaptive Deepthink batch tools, and DCA local pools.
 
-When `icr_run` is executed inside Hermes gateway, the plugin emits a lightweight activity heartbeat for the duration of the synchronous tool call. This prevents long but active ICR runs from being misclassified as inactive while preserving the same prompts, retry behavior, strategy counts, and state-machine artifacts. Set `HERMES_ICR_ACTIVITY_HEARTBEAT_SECONDS` to tune the heartbeat cadence; the default is `10` seconds.
+When `icr_run` is executed inside Hermes gateway, the plugin emits a lightweight activity heartbeat for the duration of the synchronous tool call. This prevents long but active ICR runs from being misclassified as inactive while preserving the same prompts, retry behavior, strategy counts, and state-machine artifacts. Set `HERMES_ICR_ACTIVITY_HEARTBEAT_SECONDS` to tune the heartbeat cadence; the default is `10` seconds. Set `heartbeat_stale_seconds` in run config, or `HERMES_ICR_HEARTBEAT_STALE_SECONDS`, to stop refreshing gateway activity when no real ICR progress has been recorded for that many seconds.
 
 Python-assisted agent roles are available with explicit config. When enabled, selected roles may return fenced `python` blocks; the plugin executes them in a persistent role-local Python session, records stdout/stderr/errors, then asks the same role to produce the final answer from the execution evidence.
 
@@ -33,7 +33,7 @@ The plugin saves complete run artifacts to:
 $HERMES_HOME/icr/runs/<run_id>.json
 ```
 
-Each run records raw prompts, raw responses, parsed structured data, statuses, errors, retry attempts, usage metadata, semantic mode adjustments, and final exports.
+Each run records raw prompts, raw responses, parsed structured data, statuses, errors, retry attempts, usage metadata, semantic mode adjustments, durable progress events, active LLM-call state, and final exports.
 
 State-machine artifacts are saved inside the same run JSON. They keep the original Hermes artifacts intact while projecting the run into upstream field names such as `activeDeepthinkPipeline`, `activeAgenticState`, `activeContextualState`, `activeAdaptiveDeepthinkState`, `DeepthinkPipelineState`, `AgenticState`, `ContextualState`, `AdaptiveDeepthinkStoreState`, and `DCAPipelineState`.
 
@@ -142,6 +142,8 @@ The plugin rejects invalid user configuration instead of silently reducing the r
 - Deepthink retry delays default to `20`, `40`, and `80` seconds
 - Main model call timeout override is explicit: omit `model_call_timeout_seconds` or set `0` to keep the Hermes host default; set a positive value to pass a timeout to `ctx.llm`.
 - After a timeout error, retries use `model_call_timeout_retry_seconds` (default `1200`) so long ICR prompts can recover from shorter host/provider defaults.
+- Whole-run deadline is explicit: omit `run_deadline_seconds` or set `0` to keep full-run execution unlimited; set a positive value to fail at the next ICR progress boundary after that deadline.
+- Heartbeat stale cutoff is explicit: omit `heartbeat_stale_seconds` or set `0` to keep heartbeat refreshes unlimited; set a positive value to stop heartbeat refreshes when no LLM/stage progress is recorded.
 - Evolving DFS forces selective hypothesis routing and PQF, recorded in the run config
 - Evolving DFS records the first hypothesis round at upstream `global_iteration: 0` and initial branch execution at global iteration `1`
 - Final judge receives candidate solution texts only, not internal search machinery
@@ -198,6 +200,20 @@ ICR prompts can be large, especially with full upstream Deepthink prompts and hy
 `model_call_timeout_seconds` is passed from the first attempt. If it is omitted, the first attempt keeps the Hermes host default; if that attempt fails with a timeout, later retries pass `model_call_timeout_retry_seconds`. Supported timeout keyword names are `timeout_seconds`, `timeout`, `request_timeout`, and `read_timeout`; choose the one your Hermes LLM provider accepts.
 
 This is separate from Hermes gateway inactivity protection. The plugin heartbeat keeps the gateway activity clock fresh while a long `icr_run` is still working. If the gateway timeout is still reached, set `agent.gateway_timeout` above the expected full ICR runtime or use `0` to disable the gateway limit.
+
+For diagnosing suspected stalls, use explicit progress controls instead of reducing ICR capability:
+
+```json
+{
+  "config": {
+    "model_call_timeout_seconds": 900,
+    "run_deadline_seconds": 7200,
+    "heartbeat_stale_seconds": 1800
+  }
+}
+```
+
+`icr_status` returns the durable `progress` object and `active_llm_calls`, so a running artifact can show whether the plugin is preparing a model call, waiting on a specific role/purpose, attaching the state machine, or serializing the final tool response.
 
 ## Role Model Overrides
 

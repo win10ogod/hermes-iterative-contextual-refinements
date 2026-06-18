@@ -60,6 +60,8 @@ class ICRConfig:
     model_call_timeout_seconds: float | None = None
     model_call_timeout_retry_seconds: float = 1200.0
     model_call_timeout_kwarg: str = "timeout_seconds"
+    run_deadline_seconds: float | None = None
+    heartbeat_stale_seconds: float | None = None
     python_execution_roles: tuple[str, ...] = (
         "hypothesis_testing",
         "solution_attempt",
@@ -98,6 +100,8 @@ class ICRConfig:
             "model_call_timeout_seconds": self.model_call_timeout_seconds,
             "model_call_timeout_retry_seconds": self.model_call_timeout_retry_seconds,
             "model_call_timeout_kwarg": self.model_call_timeout_kwarg,
+            "run_deadline_seconds": self.run_deadline_seconds,
+            "heartbeat_stale_seconds": self.heartbeat_stale_seconds,
             "python_execution_roles": list(self.python_execution_roles),
             "role_overrides": {
                 role: {
@@ -249,6 +253,16 @@ def build_config(raw: dict[str, Any] | None, *, mode: str) -> ICRConfig:
             1200.0,
         ),
         model_call_timeout_kwarg=str(data.get("model_call_timeout_kwarg", "timeout_seconds") or "timeout_seconds"),
+        run_deadline_seconds=_as_optional_positive_float(
+            data.get("run_deadline_seconds"),
+            "run_deadline_seconds",
+            None,
+        ),
+        heartbeat_stale_seconds=_as_optional_positive_float(
+            data.get("heartbeat_stale_seconds"),
+            "heartbeat_stale_seconds",
+            None,
+        ),
         python_execution_roles=_as_str_tuple(
             data.get("python_execution_roles"),
             "python_execution_roles",
