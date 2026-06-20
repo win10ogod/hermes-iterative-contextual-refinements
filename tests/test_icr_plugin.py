@@ -18,7 +18,8 @@ from hermes_iterative_contextual_refinements import dca as dca_module
 from hermes_iterative_contextual_refinements import prompts as prompt_module
 from hermes_iterative_contextual_refinements.config import build_config
 from hermes_iterative_contextual_refinements.constants import PLUGIN_NAME, PLUGIN_VERSION
-from hermes_iterative_contextual_refinements.commands import parse_icr_args
+from hermes_iterative_contextual_refinements.commands import make_icr_command, parse_icr_args
+from hermes_iterative_contextual_refinements.doctor import _definition_names
 from hermes_iterative_contextual_refinements import heartbeat as heartbeat_module
 from hermes_iterative_contextual_refinements.llm import ICRLlm
 from hermes_iterative_contextual_refinements.plugin import register
@@ -311,6 +312,7 @@ def test_version_metadata_is_consistent(tmp_path):
     assert f'version = "{PLUGIN_VERSION}"' in pyproject
     assert f"version: {PLUGIN_VERSION}" in plugin_yaml
     assert "  - icr_start" in plugin_yaml
+    assert "icr-hermes-doctor" in pyproject
 
     record = ICRRunner(FakeLLM(), RunStore(tmp_path / "runs")).run(
         {
@@ -330,6 +332,30 @@ def test_pip_entry_point_targets_plugin_module():
     assert entry in pyproject
     module = importlib.import_module("hermes_iterative_contextual_refinements")
     assert callable(module.register)
+
+
+def test_icr_doctor_slash_command(monkeypatch):
+    from hermes_iterative_contextual_refinements import doctor as doctor_module
+
+    monkeypatch.setattr(
+        doctor_module,
+        "diagnose",
+        lambda platform="cli": {"ok": True, "platform": platform, "plugin": PLUGIN_NAME},
+    )
+
+    payload = json.loads(make_icr_command(FakeCtx())("doctor --platform discord"))
+    assert payload == {"ok": True, "platform": "discord", "plugin": PLUGIN_NAME}
+
+
+def test_icr_doctor_args_and_definition_names():
+    assert parse_icr_args("doctor mattermost") == {"action": "doctor", "platform": "mattermost"}
+    assert parse_icr_args("doctor --platform cli") == {"action": "doctor", "platform": "cli"}
+    defs = [
+        {"function": {"name": "icr_run"}},
+        {"function": {"name": "tool_search"}},
+        {"type": "function"},
+    ]
+    assert _definition_names(defs) == ["icr_run", "tool_search"]
 
 
 def test_source_prompt_resources_are_exact_copies():

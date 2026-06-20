@@ -26,6 +26,10 @@ def make_icr_command(ctx: Any):
             return handlers["icr_export"](args)
         if action == "list":
             return handlers["icr_list_runs"](args)
+        if action == "doctor":
+            from .doctor import diagnose
+
+            return dumps(diagnose(platform=args.get("platform", "cli")))
         return dumps({"success": False, "error": f"Unknown /icr action: {action}"})
 
     return handle
@@ -59,6 +63,18 @@ def parse_icr_args(raw: str) -> dict[str, Any]:
             args["status"] = rest[1]
         if len(rest) > 2:
             args["mode"] = rest[2]
+    elif action == "doctor":
+        args["platform"] = "cli"
+        index = 0
+        while index < len(rest):
+            token = rest[index]
+            if token == "--platform":
+                args["platform"], index = _next_value(rest, index, token)
+            elif index == 0:
+                args["platform"] = token
+            else:
+                raise ValueError(f"Unknown /icr doctor option: {token}")
+            index += 1
     else:
         args["challenge"] = " ".join(rest)
     return args

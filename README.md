@@ -83,6 +83,44 @@ The package exposes the entry point group:
 hermes-iterative-contextual-refinements = "hermes_iterative_contextual_refinements"
 ```
 
+After updating the repository, reinstall the editable package so Python entry-point
+metadata is refreshed:
+
+```bash
+python -m pip install -U -e .
+```
+
+If Hermes reports the plugin as enabled but the model does not see `icr_*` tools,
+enable the plugin toolset for the active platform:
+
+```bash
+hermes tools enable icr --platform cli
+```
+
+Inside an active Hermes CLI session, the same fix is:
+
+```text
+/tools enable icr
+```
+
+Run the registration doctor when the cause is unclear:
+
+```bash
+icr-hermes-doctor --platform cli
+```
+
+or, if the slash command is available:
+
+```text
+/icr doctor --platform cli
+```
+
+The doctor checks the installed package version, Hermes entry point, plugin
+discovery result, registry state, active platform toolsets, and final
+model-facing tool definitions. A common disabled-toolset signature is
+`known_plugin_toolsets.cli` containing `icr` while `platform_toolsets.cli` does
+not.
+
 ## Tools
 
 ### `icr_run`
@@ -158,6 +196,7 @@ Background execution is process-local: if the Hermes plugin process exits, the i
 /icr start deepthink Analyze this design...
 /icr run evolving_deepthink --config-json '{"main_strategies":3,"hypotheses":2,"evolving_depth":6}' Analyze this design...
 /icr run agentic_refinement --content "Current draft" --instruction "Improve correctness and structure."
+/icr doctor --platform cli
 ```
 
 Use `icr_run` for detailed config.

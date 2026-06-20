@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hermes-iterative-contextual-refinements"
-version = "0.2.1"
+version = "0.2.2"
 description = "Hermes Agent plugin for Iterative Contextual Refinements."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -17,6 +17,7 @@ dev = ["pytest>=8"]
 
 [project.scripts]
 icr-prompt-parity = "hermes_iterative_contextual_refinements.prompt_parity:main"
+icr-hermes-doctor = "hermes_iterative_contextual_refinements.doctor:main"
 
 [project.entry-points."hermes_agent.plugins"]
 hermes-iterative-contextual-refinements = "hermes_iterative_contextual_refinements"

@@ -52,7 +52,7 @@ def register(ctx: Any) -> None:
         name="icr",
         handler=make_icr_command(ctx),
         description="Run and inspect Iterative Contextual Refinements.",
-        args_hint="run <mode> <challenge> | start <mode> <challenge> | status <run_id> | export <run_id> [json|markdown] | list [limit]",
+        args_hint="run <mode> <challenge> | start <mode> <challenge> | status <run_id> | export <run_id> [json|markdown] | list [limit] | doctor [--platform cli]",
     )
     _register_skills(ctx)
 
