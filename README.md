@@ -59,6 +59,16 @@ plugins:
     - hermes-iterative-contextual-refinements
 ```
 
+If the active Hermes profile declares an explicit `toolsets:` list, include the plugin toolset too:
+
+```yaml
+toolsets:
+  - hermes-cli
+  - icr
+```
+
+When no explicit toolset filter is used, Hermes discovers the plugin-provided `icr` toolset automatically. With an explicit filter, plugin enablement and tool exposure are separate: `plugins.enabled` loads and registers the plugin, while `toolsets` controls whether the model receives `icr_run`, `icr_start`, `icr_status`, `icr_export`, and `icr_list_runs`.
+
 ### Pip plugin
 
 ```bash
@@ -70,7 +80,7 @@ The package exposes the entry point group:
 
 ```toml
 [project.entry-points."hermes_agent.plugins"]
-hermes-iterative-contextual-refinements = "hermes_iterative_contextual_refinements:register"
+hermes-iterative-contextual-refinements = "hermes_iterative_contextual_refinements"
 ```
 
 ## Tools

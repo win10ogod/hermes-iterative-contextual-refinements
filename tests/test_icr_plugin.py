@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import hashlib
+import importlib
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -319,6 +320,16 @@ def test_version_metadata_is_consistent(tmp_path):
         }
     )
     assert record["artifacts"]["state_machine"]["versioned_state"]["_appVersion"] == f"{PLUGIN_NAME}/{PLUGIN_VERSION}"
+
+
+def test_pip_entry_point_targets_plugin_module():
+    root = Path(__file__).resolve().parents[1]
+    pyproject = (root / "pyproject.toml").read_text(encoding="utf-8")
+    entry = 'hermes-iterative-contextual-refinements = "hermes_iterative_contextual_refinements"'
+
+    assert entry in pyproject
+    module = importlib.import_module("hermes_iterative_contextual_refinements")
+    assert callable(module.register)
 
 
 def test_source_prompt_resources_are_exact_copies():

@@ -1,7 +1,7 @@
 """Shared constants for the ICR Hermes plugin."""
 
 PLUGIN_NAME = "hermes-iterative-contextual-refinements"
-PLUGIN_VERSION = "0.2.0"
+PLUGIN_VERSION = "0.2.1"
 TOOLSET_NAME = "icr"
 
 MAX_API_ATTEMPTS = 4

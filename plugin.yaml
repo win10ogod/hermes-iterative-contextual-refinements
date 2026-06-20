@@ -1,5 +1,5 @@
 name: hermes-iterative-contextual-refinements
-version: 0.2.0
+version: 0.2.1
 description: Hermes plugin for Iterative Contextual Refinements, Deepthink, Adaptive Deepthink, Agentic Refinement, and Dynamic Compute Alternatives.
 author: local
 kind: standalone
